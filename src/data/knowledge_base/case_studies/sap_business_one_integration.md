@@ -1,10 +1,16 @@
 # Case Study: SAP Business One Integration with WMS (Global Deployment)
 
-**Organization:** Distribution company, 5 warehouses across 3 continents  
+**Organization:** Distribution company, 5 warehouses spanning 4 continents, 6 regions  
+**Warehouses by Continent:**
+- **North America** (2): NYC, Miami  
+- **Europe** (2): London, Athens/Greece  
+- **Asia** (1): Singapore  
+- **Oceania** (1): Sydney/Australia  
+
 **Timeline:** 8 months (planning + implementation + stabilization)  
 **Scope:** SAP Business One (MSSQL-backed) + Produmex WMS integration, 50 → 200+ concurrent users  
-**Challenge:** Real-time inventory sync across regions, zero data loss, 95%+ uptime  
-**Outcome:** 95%+ query performance improvement, real-time WMS integration, scaled to 200+ users  
+**Challenge:** Real-time inventory sync across 4 continents, zero data loss, 95%+ uptime with regional compliance  
+**Outcome:** 95%+ query performance improvement, real-time WMS integration across all regions, scaled to 200+ users, 99%+ inventory accuracy  
 
 ---
 

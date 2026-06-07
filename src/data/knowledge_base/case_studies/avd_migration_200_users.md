@@ -2,9 +2,10 @@
 
 **Organization:** Financial services firm, multi-site, global operations  
 **Timeline:** 4 months (planning + migration + stabilization)  
-**Scope:** 120 on-premises VDI users → Azure Virtual Desktop across 3 regions  
+**Scope:** 120 on-premises VDI users → Azure Virtual Desktop across 3 continents (North America, Europe, Asia-Pacific)  
+**Regions:** US-East (NYC), EU-West (London), Asia-Southeast (Singapore)  
 **Challenge:** Maintain uptime during transition, handle regional latency, scale to 200  
-**Outcome:** 99.5%+ uptime, <100ms p90 latency, disaster recovery validated  
+**Outcome:** 99.5%+ uptime, <100ms p90 latency across all continents, disaster recovery validated  
 
 ---
 
