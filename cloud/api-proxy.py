@@ -157,10 +157,10 @@ async def websocket_chat(websocket: WebSocket):
                 messages = body.get("messages", [])
                 body["stream"] = True
 
-                # Tune for grounded, deterministic responses
-                body["temperature"] = 0.3  # Lower = more deterministic, less hallucination
-                body["top_p"] = 0.9  # Slightly more focused than default
-                body["presence_penalty"] = 0.5  # Discourage repetitive generic phrases
+                # Strict decoding for grounded, deterministic responses
+                body["temperature"] = 0.1  # Force near-deterministic token selection
+                body["top_p"] = 0.7  # Eliminate long-tail creative tokens
+                body["presence_penalty"] = 0.5
 
                 # RAG: Search knowledge base for context
                 user_query = messages[-1].get("content", "") if messages else ""
@@ -170,40 +170,26 @@ async def websocket_chat(websocket: WebSocket):
                 for i, doc in enumerate(context_docs, 1):
                     logger.info(f"  {i}. {doc.get('title')} ({doc.get('source')})")
 
-                # Build system prompt with context
-                system_prompt = """You are Chris Wetzel, an IT infrastructure expert with 26 years of experience managing mission-critical systems across enterprise environments.
+                # Build system prompt with strict grounding rules
+                system_prompt = """You are Chris Wetzel. Answer only from the knowledge base below.
 
-CRITICAL INSTRUCTIONS:
-1. GROUND all claims in your actual documented experience and the knowledge base below
-2. CITE specific case studies, projects, or documented outcomes when making claims
-3. SHOW THE MATH: When stating numbers (cost savings, improvements, etc.), explain how you derived them from your actual work
-4. AVOID generic LLM advice that could apply to anyone—focus on YOUR specific experience and lessons learned
-5. If asked about something not in your knowledge base, say so explicitly rather than generalizing
+RULES (non-negotiable):
+1. First person only. You ARE Chris — never say "as an IT infrastructure expert" in third-person.
+2. If the answer is fully supported by the context below, begin with [FOUND].
+3. If the context does not contain the answer, respond with exactly: "[NOT FOUND] I don't have that documented in my knowledge base." Then stop.
+4. If sources conflict, respond with: "[CONFLICT] Conflicting information found in local knowledge base." Do not resolve or guess.
+5. Ground responses in your documented experience. When discussing tools, prioritize those in your knowledge base (Gentoo, kernel_config.sh, shell scripts, vLLM, Qdrant). You can mention how you've used other tools, but only if grounded in actual projects.
+6. Cite specific machines, files, or case studies for every factual claim. Include relevant paths like gentoo-machines/machines/*, tools/*, or case study names.
 
-Your documented experience includes:
-- 50+ server migrations and infrastructure consolidations
-- Multi-continent deployments (NYC, Miami, London, Greece, Singapore, Australia)
-- SOC2 Type II compliance implementations
-- Disaster recovery planning with proven RTO/RPO metrics
-- SAP/ERP integrations across global operations
-- P2V migrations with documented cost reductions (60%+ hardware cost savings)
-
-WHEN MAKING CLAIMS ABOUT COST SAVINGS OR IMPACT:
-- Document the specific project and numbers
-- Show your calculation: e.g., "$800k/year power costs × 2 years = $1.6M total savings"
-- Reference the actual case or context from your knowledge base
-- Never give generic advice about how "people typically calculate" something
-- The case studies below ARE YOUR ACTUAL WORK — cite them directly with specific numbers
-- DO NOT say information is "proprietary" or "cannot be disclosed" — the cases here are explicitly provided for citation
+Your documented systems: Precision T5810 (dual A4500 GPUs, PCIe Gen4), Surface Pro 8, ThinkPad X1, custom AMD build, NUC8i7. OS: Gentoo Linux. Automation: custom shell scripts in gentoo-machines repo.
 
 ---
-
-KNOWLEDGE BASE CONTEXT (grounding for your responses):
+KNOWLEDGE BASE (your actual documented work):
 """
                 for doc in context_docs:
                     title = doc.get("title", "Unknown")
                     source = doc.get("source", "")
-                    content = doc.get("content", "")[:2000]  # Full chunk content for better grounding
+                    content = doc.get("content", "")[:2000]
                     system_prompt += f"\n\n### {title} ({source})\n{content}"
 
                 # Inject system message if not present
@@ -219,16 +205,39 @@ KNOWLEDGE BASE CONTEXT (grounding for your responses):
                         f"{VLLM_URL}/v1/chat/completions",
                         json=body
                     ) as response:
+                        full_response = ""
                         async for line in response.aiter_lines():
                             if line.startswith("data: "):
                                 try:
                                     chunk = json.loads(line[6:])
-                                    await websocket.send_json({
-                                        "type": "chunk",
-                                        "data": chunk
-                                    })
+                                    # Accumulate response text to check for [NOT FOUND]
+                                    if chunk.get("choices"):
+                                        delta_content = chunk["choices"][0].get("delta", {}).get("content", "")
+                                        full_response += delta_content
+                                    # Stream chunk to client (strip [FOUND]/[NOT FOUND]/[CONFLICT] tags before sending)
+                                    if chunk.get("choices"):
+                                        modified_chunk = chunk.copy()
+                                        delta = modified_chunk["choices"][0].get("delta", {})
+                                        if delta:
+                                            # Remove control tags from display
+                                            delta_content = delta.get("content", "")
+                                            if delta_content:
+                                                delta["content"] = delta_content.replace("[FOUND]", "").replace("[NOT FOUND]", "").replace("[CONFLICT]", "").lstrip()
+                                            modified_chunk["choices"][0]["delta"] = delta
+                                        await websocket.send_json({
+                                            "type": "chunk",
+                                            "data": modified_chunk
+                                        })
                                 except:
                                     pass
+
+                        # Log whether response was grounded
+                        if "[NOT FOUND]" in full_response:
+                            logger.info(f"Response: NOT FOUND — query had no supporting context")
+                        elif "[CONFLICT]" in full_response:
+                            logger.info(f"Response: CONFLICT — multiple sources disagree")
+                        else:
+                            logger.info(f"Response: FOUND — answer grounded in knowledge base")
 
                 await websocket.send_json({"type": "done"})
     except Exception as e:
