@@ -85,19 +85,23 @@ async def query(question: str) -> str:
             }))
 
             response = ""
+
+            async def collect():
+                nonlocal response
+                while True:
+                    raw = await ws.recv()
+                    msg = json.loads(raw)
+                    if msg.get("type") == "chunk":
+                        delta = (msg.get("data", {})
+                                   .get("choices", [{}])[0]
+                                   .get("delta", {})
+                                   .get("content", ""))
+                        response += delta
+                    elif msg.get("type") in ("done", "error"):
+                        break
+
             try:
-                async with asyncio.timeout(RESPONSE_TIMEOUT):
-                    while True:
-                        raw = await ws.recv()
-                        msg = json.loads(raw)
-                        if msg.get("type") == "chunk":
-                            delta = (msg.get("data", {})
-                                       .get("choices", [{}])[0]
-                                       .get("delta", {})
-                                       .get("content", ""))
-                            response += delta
-                        elif msg.get("type") in ("done", "error"):
-                            break
+                await asyncio.wait_for(collect(), timeout=RESPONSE_TIMEOUT)
             except asyncio.TimeoutError:
                 response += "  [TIMED OUT]"
 
