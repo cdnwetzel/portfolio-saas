@@ -89,3 +89,11 @@ logs/
 *.sql
 *.sql.gz
 backup/
+
+# Stale local scripts / one-off init files
+run_phase0.sh
+run_phase0_direct.sh
+scripts/cwdotcom-api.initd
+
+# KB subdirs not tracked in git
+src/data/knowledge_base/pxx_docs/
