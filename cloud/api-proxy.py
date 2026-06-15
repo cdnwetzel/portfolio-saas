@@ -4,6 +4,7 @@ Handles auth, rate limiting, request logging.
 """
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,9 +15,22 @@ from datetime import datetime
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Portfolio AI Proxy")
+VLLM_URL  = "http://127.0.0.1:8004"
+QDRANT_URL = "http://127.0.0.1:6333"
+EMBED_URL  = "http://127.0.0.1:8005"
 
-# CORS
+# Persistent client — avoids TCP hand-shake overhead on every request
+_http: httpx.AsyncClient | None = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _http
+    _http = httpx.AsyncClient(timeout=120.0)
+    yield
+    await _http.aclose()
+
+app = FastAPI(title="Portfolio AI Proxy", lifespan=lifespan)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://dev.cwetzel.com", "https://cwetzel.com"],
@@ -24,11 +38,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Use existing pscode vLLM on 8004
-VLLM_URL = "http://ai.cwetzel.com:8004"
-QDRANT_URL = "http://ai.cwetzel.com:6333"
-EMBED_URL = "http://127.0.0.1:8005"  # Embedding service via SSH tunnel
 
 @app.get("/health")
 async def health():
@@ -40,14 +49,12 @@ async def chat(request: Request):
     try:
         body = await request.json()
         logger.info(f"Chat request: {body.get('messages', [])[-1:] if body.get('messages') else 'no messages'}")
-
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                f"{VLLM_URL}/v1/chat/completions",
-                json=body,
-                headers={"Content-Type": "application/json"}
-            )
-            return JSONResponse(response.json())
+        response = await _http.post(
+            f"{VLLM_URL}/v1/chat/completions",
+            json=body,
+            headers={"Content-Type": "application/json"}
+        )
+        return JSONResponse(response.json())
     except Exception as e:
         logger.error(f"Chat error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -61,16 +68,15 @@ async def chat_stream(request: Request):
         logger.info(f"Stream request: {body.get('model')}")
 
         async def generate():
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                async with client.stream(
-                    "POST",
-                    f"{VLLM_URL}/v1/chat/completions",
-                    json=body,
-                    headers={"Content-Type": "application/json"}
-                ) as response:
-                    async for line in response.aiter_lines():
-                        if line.startswith("data: "):
-                            yield line[6:] + "\n"
+            async with _http.stream(
+                "POST",
+                f"{VLLM_URL}/v1/chat/completions",
+                json=body,
+                headers={"Content-Type": "application/json"}
+            ) as response:
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        yield line[6:] + "\n"
 
         return StreamingResponse(generate(), media_type="text/event-stream")
     except Exception as e:
@@ -85,57 +91,48 @@ async def search(request: Request):
         collection = body.get("collection", "documents")
         query = body.get("query", [])
         limit = body.get("limit", 5)
-
         logger.info(f"Search in {collection}: limit={limit}")
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{QDRANT_URL}/collections/{collection}/points/search",
-                json={"vector": query, "limit": limit, "with_payload": True},
-                headers={"Content-Type": "application/json"}
-            )
-            return JSONResponse(response.json())
+        response = await _http.post(
+            f"{QDRANT_URL}/collections/{collection}/points/search",
+            json={"vector": query, "limit": limit, "with_payload": True},
+            headers={"Content-Type": "application/json"}
+        )
+        return JSONResponse(response.json())
     except Exception as e:
         logger.error(f"Search error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 async def search_knowledge_base(query: str, limit: int = 3) -> list:
-    """Search Qdrant using semantic embeddings — no manual weight tuning needed."""
+    """Embed query then vector-search Qdrant. Uses persistent httpx client."""
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            # Step 1: Embed the query using all-MiniLM-L6-v2
-            logger.info(f"Embedding query: {query[:80]}...")
-            embed_response = await client.post(
-                f"{EMBED_URL}/embed",
-                json={"text": query},
-                timeout=5.0
-            )
-            if embed_response.status_code != 200:
-                logger.error(f"Embedding failed: {embed_response.status_code}")
-                return []
+        # Embed
+        embed_resp = await _http.post(
+            f"{EMBED_URL}/embed",
+            json={"text": query},
+            timeout=10.0
+        )
+        if embed_resp.status_code != 200:
+            logger.error(f"Embedding failed: {embed_resp.status_code}")
+            return []
 
-            query_embedding = embed_response.json()["embedding"]
-            logger.info(f"Query embedded to {len(query_embedding)} dims")
+        query_embedding = embed_resp.json()["embedding"]
+        logger.info(f"Query embedded ({len(query_embedding)} dims)")
 
-            # Step 2: Vector search in Qdrant — cosine similarity ranks results automatically
-            search_response = await client.post(
-                f"{QDRANT_URL}/collections/documents/points/search",
-                json={
-                    "vector": query_embedding,
-                    "limit": limit,
-                    "with_payload": True
-                },
-                timeout=10.0
-            )
+        # Search
+        search_resp = await _http.post(
+            f"{QDRANT_URL}/collections/documents/points/search",
+            json={"vector": query_embedding, "limit": limit, "with_payload": True},
+            timeout=10.0
+        )
+        if search_resp.status_code != 200:
+            logger.error(f"Vector search failed: {search_resp.status_code}")
+            return []
 
-            if search_response.status_code == 200:
-                results = search_response.json().get("result", [])
-                payloads = [r.get("payload", {}) for r in results]
-                logger.info(f"Search returned {len(payloads)} results")
-                return payloads
-            else:
-                logger.error(f"Vector search failed: {search_response.status_code}")
-                return []
+        results = search_resp.json().get("result", [])
+        payloads = [r.get("payload", {}) for r in results]
+        logger.info(f"Search returned {len(payloads)} results")
+        return payloads
 
     except Exception as e:
         logger.error(f"Search error: {e}")
@@ -144,7 +141,7 @@ async def search_knowledge_base(query: str, limit: int = 3) -> list:
 
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
-    """WebSocket for real-time chat streaming with RAG"""
+    """WebSocket: real-time chat streaming with RAG"""
     await websocket.accept()
     logger.info(f"WebSocket connected from {websocket.client}")
 
@@ -152,31 +149,28 @@ async def websocket_chat(websocket: WebSocket):
         while True:
             try:
                 data = await websocket.receive_json()
-                logger.info(f"Received message: {data.get('type')}")
+                logger.info(f"Received message type: {data.get('type')}")
             except Exception as receive_error:
                 logger.info(f"WebSocket receive ended: {receive_error}")
                 break
 
-            if data.get("type") == "chat":
-                body = data.get("payload", {})
-                messages = body.get("messages", [])
-                body["stream"] = True
+            if data.get("type") != "chat":
+                continue
 
-                # Strict decoding for grounded, deterministic responses
-                body["temperature"] = 0.1  # Force near-deterministic token selection
-                body["top_p"] = 0.7  # Eliminate long-tail creative tokens
-                body["presence_penalty"] = 0.5
+            body = data.get("payload", {})
+            messages = body.get("messages", [])
+            body["stream"] = True
+            body["temperature"] = 0.1
+            body["top_p"] = 0.7
+            body["presence_penalty"] = 0.5
 
-                # RAG: Search knowledge base for context
-                user_query = messages[-1].get("content", "") if messages else ""
-                context_docs = await search_knowledge_base(user_query, limit=3)
-                logger.info(f"RAG Query: {user_query[:100]}")
-                logger.info(f"Retrieved {len(context_docs)} docs:")
-                for i, doc in enumerate(context_docs, 1):
-                    logger.info(f"  {i}. {doc.get('title')} ({doc.get('source')})")
+            user_query = messages[-1].get("content", "") if messages else ""
+            context_docs = await search_knowledge_base(user_query, limit=3)
+            logger.info(f"RAG: {len(context_docs)} docs for query: {user_query[:100]}")
+            for i, doc in enumerate(context_docs, 1):
+                logger.info(f"  {i}. {doc.get('title')} ({doc.get('source')})")
 
-                # Build system prompt with strict grounding rules
-                system_prompt = """You are Chris Wetzel. Answer questions based on the knowledge base below.
+            system_prompt = """You are Chris Wetzel. Answer questions based on the knowledge base below.
 
 RULES (non-negotiable):
 1. First person only. You ARE Chris — never say "as an IT infrastructure expert" in third-person.
@@ -187,65 +181,61 @@ RULES (non-negotiable):
 
 Your documented systems: Precision T5810 (dual A4500 GPUs, PCIe Gen4), Surface Pro 8, ThinkPad X1, custom AMD build, NUC8i7. OS: Gentoo Linux. Automation: custom shell scripts in gentoo-machines repo.
 
+After your answer — on its own line, no extra prose — output exactly this format:
+FOLLOWUPS:["<question 1>","<question 2>","<question 3>"]
+These should be natural follow-up questions a visitor would want to ask next.
+
 ---
 KNOWLEDGE BASE (your actual documented work):
 """
-                for doc in context_docs:
-                    title = doc.get("title", "Unknown")
-                    source = doc.get("source", "")
-                    content = doc.get("content", "")[:2000]
-                    system_prompt += f"\n\n### {title} ({source})\n{content}"
+            for doc in context_docs:
+                title   = doc.get("title", "Unknown")
+                source  = doc.get("source", "")
+                content = doc.get("content", "")[:2000]
+                system_prompt += f"\n\n### {title} ({source})\n{content}"
 
-                # Inject system message if not present
-                if not any(m.get("role") == "system" for m in messages):
-                    messages = [{"role": "system", "content": system_prompt}] + messages
-                    body["messages"] = messages
+            if not any(m.get("role") == "system" for m in messages):
+                messages = [{"role": "system", "content": system_prompt}] + messages
+                body["messages"] = messages
 
-                logger.info(f"Chat request with {len(context_docs)} context docs")
+            try:
+                async with _http.stream(
+                    "POST",
+                    f"{VLLM_URL}/v1/chat/completions",
+                    json=body,
+                    timeout=120.0
+                ) as response:
+                    full_response = ""
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        try:
+                            chunk = json.loads(line[6:])
+                            if chunk.get("choices"):
+                                delta_content = chunk["choices"][0].get("delta", {}).get("content", "")
+                                full_response += delta_content
+                                await websocket.send_json({"type": "chunk", "data": chunk})
+                        except json.JSONDecodeError:
+                            pass
+                        except Exception as chunk_error:
+                            logger.error(f"Chunk error: {chunk_error}")
 
+                if "don't have that documented" in full_response.lower():
+                    logger.info("Response: NOT GROUNDED")
+                elif "conflicting information" in full_response.lower():
+                    logger.info("Response: CONFLICT")
+                else:
+                    logger.info("Response: GROUNDED")
+
+                await websocket.send_json({"type": "done"})
+
+            except Exception as stream_error:
+                logger.error(f"Stream error: {stream_error}")
                 try:
-                    async with httpx.AsyncClient(timeout=120.0) as client:
-                        async with client.stream(
-                            "POST",
-                            f"{VLLM_URL}/v1/chat/completions",
-                            json=body
-                        ) as response:
-                            full_response = ""
-                            async for line in response.aiter_lines():
-                                if line.startswith("data: "):
-                                    try:
-                                        chunk = json.loads(line[6:])
-                                        # Accumulate response text for logging
-                                        if chunk.get("choices"):
-                                            delta_content = chunk["choices"][0].get("delta", {}).get("content", "")
-                                            full_response += delta_content
-                                        # Stream chunk to client directly
-                                        if chunk.get("choices"):
-                                            await websocket.send_json({
-                                                "type": "chunk",
-                                                "data": chunk
-                                            })
-                                    except json.JSONDecodeError:
-                                        pass
-                                    except Exception as chunk_error:
-                                        logger.error(f"Chunk error: {chunk_error}")
+                    await websocket.send_json({"type": "error", "message": str(stream_error)})
+                except Exception:
+                    pass
 
-                    # Log grounding status based on response content
-                    if "don't have that documented" in full_response.lower():
-                        logger.info(f"Response: NOT GROUNDED — query had no supporting context")
-                    elif "conflicting information" in full_response.lower():
-                        logger.info(f"Response: CONFLICT — multiple sources disagree")
-                    else:
-                        logger.info(f"Response: GROUNDED — answer cites documented experience")
-
-                    await websocket.send_json({"type": "done"})
-                    logger.info(f"Sent done message")
-                except Exception as stream_error:
-                    logger.error(f"Stream error: {stream_error}")
-                    try:
-                        await websocket.send_json({"type": "error", "message": str(stream_error)})
-                    except:
-                        pass
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
     finally:
@@ -253,6 +243,7 @@ KNOWLEDGE BASE (your actual documented work):
             await websocket.close()
         except Exception as close_error:
             logger.debug(f"WebSocket already closed: {close_error}")
+
 
 if __name__ == "__main__":
     import uvicorn

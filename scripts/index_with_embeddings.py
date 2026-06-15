@@ -65,6 +65,37 @@ def load_documents(kb_path: str) -> List[Dict]:
                 })
                 logger.info(f"✓ Loaded case study: {title}")
 
+    # Load infrastructure docs (and any other subdirectories of .md files)
+    for subdir in sorted(kb_dir.iterdir()):
+        if not subdir.is_dir() or subdir.name in ("case_studies", "posts", "pxx_docs"):
+            continue
+        for md_file in sorted(subdir.glob("*.md")):
+            with open(md_file) as f:
+                content = f.read()
+                title = md_file.stem.replace("_", " ").title()
+                docs.append({
+                    "id": f"{subdir.name}_{md_file.stem}",
+                    "title": title,
+                    "content": content,
+                    "source": subdir.name,
+                })
+                logger.info(f"✓ Loaded {subdir.name}/{md_file.name}: {title}")
+
+    # Load top-level .md files (except RESUME which is handled separately)
+    for md_file in sorted(kb_dir.glob("*.md")):
+        if md_file.name in ("RESUME.md", "INDEX.md"):
+            continue
+        with open(md_file) as f:
+            content = f.read()
+            title = md_file.stem.replace("_", " ").title()
+            docs.append({
+                "id": f"doc_{md_file.stem}",
+                "title": title,
+                "content": content,
+                "source": "knowledge_base",
+            })
+            logger.info(f"✓ Loaded {md_file.name}: {title}")
+
     # Load resume
     resume_file = kb_dir / "RESUME.md"
     if resume_file.exists():
