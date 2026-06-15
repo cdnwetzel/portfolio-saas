@@ -21,9 +21,12 @@ Machines don't drift silently because changes are committed. If I rebuild the T5
 
 | Machine | Hardware | Status |
 |---|---|---|
-| **T5810** | Dell Precision, 2× RTX A4500 (NVLink), Xeon E5-2697 | Active — AI inference (vLLM), GPU workloads |
-| **Surface Pro 6** | Intel 8th-gen, Gentoo built and running | Active — portable dev |
+| **T5810** | Dell Precision, 2× RTX A4500 (NVLink), Xeon E5-2697 | Active — AI inference (vLLM), primary GPU server |
+| **OptiPlex 3090 SFF** | Dell OptiPlex 3090 SFF, RTX A1000 (8GB) | Active — secondary GPU workstation |
 | **AMD build** | Custom, Ryzen 9 5950X (Zen 3), 16-core | Active — heavy compile workloads |
+| **Dell XPS 15 9510** | Intel Core i7-11800H (Tiger Lake H) | Active — dev laptop |
+| **Beelink MINI S** | Intel mini PC | Active — low-power always-on tasks |
+| **Surface Pro 6** | Intel 8th-gen | Active — portable dev |
 | **NUC 11** | Intel i5 NUC 11 | Profiled (kernel_config.sh documented); OS not installed |
 | **Surface Pro 9** | Intel Core i7-1255U | Profiled; not built |
 
@@ -40,12 +43,24 @@ gentoo-machines/
 │   │   ├── kernel_config.sh      # NVLink, PCIe Gen4, CUDA, GPU memory opts
 │   │   ├── make.conf             # Gentoo build profile, CFLAGS, USE flags
 │   │   └── notes.md              # Hardware quirks, what broke, what fixed it
-│   ├── surface-pro-6/
-│   │   ├── kernel_config.sh      # Touchscreen, wifi, battery, power mgmt
+│   ├── optiplex-3090-sff/
+│   │   ├── kernel_config.sh      # RTX A1000, SFF cooling constraints
 │   │   ├── make.conf
 │   │   └── notes.md
 │   ├── amd-build/
 │   │   ├── kernel_config.sh      # Ryzen 9 5950X Zen3 opts, high-core compile
+│   │   ├── make.conf
+│   │   └── notes.md
+│   ├── dell-xps-15-9510/
+│   │   ├── kernel_config.sh      # Tiger Lake H, hybrid graphics, laptop power mgmt
+│   │   ├── make.conf
+│   │   └── notes.md
+│   ├── beelink-mini-s/
+│   │   ├── kernel_config.sh      # Low-power Intel, passive/semi-passive cooling
+│   │   ├── make.conf
+│   │   └── notes.md
+│   ├── surface-pro-6/
+│   │   ├── kernel_config.sh      # Touchscreen, wifi, battery, power mgmt
 │   │   ├── make.conf
 │   │   └── notes.md
 │   └── nuc11/
@@ -87,9 +102,23 @@ The T5810 is the most complex machine in the fleet due to the AI inference workl
 
 ---
 
-## tools/update-system.sh
+## Tools Directory — Fleet Automation
 
-Coordinated update script for running `emerge --update @world` across machines with:
+The `tools/` directory is where most of the engineering work lives. These aren't one-off scripts — they're a coordinated toolkit for managing Gentoo across diverse hardware without drift.
+
+**`kconfig-lint.sh`** — Static kernel config validator. Checks `kernel_config.sh` files for ~19,000 kernel symbols across 5 error classes (dangerous combinations, missing dependencies, conflicting options). Runs before any kernel compile to catch mistakes before they cause boot failures.
+
+**`harvest.sh`** — Hardware discovery tool. Interrogates the running system across 15 categories (PCI devices, USB, ACPI, CPU features, memory config, storage layout, network interfaces, etc.) and emits a structured hardware inventory. Used to bootstrap `kernel_config.sh` for a new machine and to verify hardware detection after kernel changes.
+
+**`kernel-config-template.sh`** — Auto-generates a starting `kernel_config.sh` from `harvest.sh` output. Takes raw hardware discovery and produces a documented template with options pre-filled and rationale stubs for human editing. Reduces time-to-correct-kernel from hours to under 30 minutes on new hardware.
+
+**`generate-install.sh`** — Creates three-phase automated Gentoo install scripts (bootstrap, base system, machine-specific) with machine-specific feature gates. Each phase is idempotent and resumable. Turns a fresh disk into a running Gentoo install with correct kernel in ~2 hours.
+
+**`verify-install.sh`** — Post-reboot deep verification across 8 sections (kernel, hardware detection, services, network, storage, GPU, audio, power). Auto-detects which machine it's running on and applies the appropriate verification checklist. Exits with a structured pass/fail report.
+
+**`build-kernel-remote.sh`** — Cross-compilation and SSH-based kernel deployment. Build the kernel for a constrained machine (Beelink, NUC) on a powerful host (AMD build or T5810), then transfer and install via SSH. Critical for machines where native compilation would take hours or overwhelm the thermal envelope.
+
+**`update-system.sh`** — Coordinated update script for running `emerge --update @world` across machines with:
 - Dependency pre-resolution (checks before committing)
 - Kernel recompile + automated smoke test after kernel updates
 - Service restart orchestration with health checks

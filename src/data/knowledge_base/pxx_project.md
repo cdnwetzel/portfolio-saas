@@ -18,7 +18,7 @@ Aider is a powerful AI coding assistant but it's stateless — every session sta
 
 ## Fleet It Runs On
 
-- **Mac Studio** (M4 Max, 36GB) — runs pxx and Ollama locally (`devstral:24b` default, plus `qwen2.5:32b`, `qwen2.5-coder:7b`)
+- **Mac Studio** (M4 Max, 36GB) — runs pxx and Ollama locally. Default model: `devstral:24b`. Also available: `qwen2.5:32b`, `qwen2.5-coder:7b`
 - **T5810** (Dell Precision, 2× RTX A4500) — remote vLLM serving `qwen2.5-coder-14b` via SSH tunnel on `:8003`. Used for tier-2/3 sessions requiring more GPU headroom
 
 ## Architecture
@@ -43,7 +43,8 @@ Your Project
 ### Persistent Observation Memory (agentmemory service)
 - Captures aider tool calls and edits automatically
 - Hybrid search: 40% BM25 keyword + 60% semantic vector similarity
-- HNSW index for fast retrieval at scale (100x speedup at 100k+ observations)
+- HNSW index: ~5ms retrieval at 100k+ observations (100x speedup over linear scan)
+- SQLite storage at `~/.pxx/memory.db`; <100MB per 10k observations
 - TTL cleanup (configurable; 90-day default), archived to JSONL on delete
 - Slash commands in session: `/recall <query>`, `/remember`, `/forget`
 

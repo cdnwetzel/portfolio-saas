@@ -1,6 +1,6 @@
 """
-FastAPI proxy: cwetzel.com:8000 → T5810 (vLLM:8004, Qdrant:6333)
-Handles auth, rate limiting, request logging.
+FastAPI proxy: cwetzel.com:8000 → T5810 (vLLM:8004, Qdrant:6333, embeddings:8005)
+WebSocket chat with RAG pipeline: embed → Qdrant search → vLLM stream.
 """
 import asyncio
 import logging
@@ -46,46 +46,6 @@ app.add_middleware(
 @app.get("/health")
 async def health():
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
-
-@app.post("/api/chat")
-async def chat(request: Request):
-    """Proxy chat request to vLLM"""
-    try:
-        body = await request.json()
-        logger.info(f"Chat request: {body.get('messages', [])[-1:] if body.get('messages') else 'no messages'}")
-        response = await _http.post(
-            f"{VLLM_URL}/v1/chat/completions",
-            json=body,
-            headers={"Content-Type": "application/json"}
-        )
-        return JSONResponse(response.json())
-    except Exception as e:
-        logger.error(f"Chat error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/chat-stream")
-async def chat_stream(request: Request):
-    """Proxy streaming chat to vLLM"""
-    try:
-        body = await request.json()
-        body["stream"] = True
-        logger.info(f"Stream request: {body.get('model')}")
-
-        async def generate():
-            async with _http.stream(
-                "POST",
-                f"{VLLM_URL}/v1/chat/completions",
-                json=body,
-                headers={"Content-Type": "application/json"}
-            ) as response:
-                async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        yield line[6:] + "\n"
-
-        return StreamingResponse(generate(), media_type="text/event-stream")
-    except Exception as e:
-        logger.error(f"Stream error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/search")
 async def search(request: Request):
@@ -199,23 +159,19 @@ async def websocket_chat(websocket: WebSocket):
             for i, doc in enumerate(context_docs, 1):
                 logger.info(f"  {i}. {doc.get('title')} ({doc.get('source')})")
 
-            system_prompt = """You are Chris Wetzel. Answer questions based on the knowledge base below.
+            system_prompt = """You are Chris Wetzel. Answer questions based solely on the knowledge base documents below.
 
 RULES (non-negotiable):
-1. First person only. You ARE Chris — never say "as an IT infrastructure expert" in third-person.
-2. If the knowledge base doesn't contain the answer, explicitly say: "I don't have that documented in my knowledge base."
-3. Always cite specific files, machines, tools, or case studies from the knowledge base.
-4. Ground every factual claim in documented experience. Prioritize tools in your knowledge base: Gentoo, kernel_config.sh, shell scripts, vLLM, Qdrant.
-5. If sources conflict, state: "My knowledge base has conflicting information on this."
+1. First person only. You ARE Chris — never refer to yourself in the third person.
+2. All facts must come from the knowledge base below. Do not supplement with general knowledge.
+3. If the knowledge base does not contain the answer, say exactly: "I don't have that documented in my knowledge base."
+4. If sources conflict, say: "My knowledge base has conflicting information on this."
 
-Your documented systems: Precision T5810 (dual A4500 GPUs, PCIe Gen4), Surface Pro 8, ThinkPad X1, custom AMD build, NUC8i7. OS: Gentoo Linux. Automation: custom shell scripts in gentoo-machines repo.
-
-After your answer — on its own line, no extra prose — output exactly this format:
+After your answer — on its own line, no extra prose — output exactly:
 FOLLOWUPS:["<question 1>","<question 2>","<question 3>"]
-These should be natural follow-up questions a visitor would want to ask next.
 
 ---
-KNOWLEDGE BASE (your actual documented work):
+KNOWLEDGE BASE:
 """
             for doc in context_docs:
                 title   = doc.get("title", "Unknown")
