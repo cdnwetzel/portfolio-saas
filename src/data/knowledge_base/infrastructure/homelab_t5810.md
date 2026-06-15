@@ -8,13 +8,14 @@
 
 ### GPU Configuration
 - **2× NVIDIA RTX A4500** (20 GB GDDR6 each, 40 GB total)
-- **NVLink bridge:** Both GPUs connected for peer-to-peer memory access and tensor parallelism
+- **NVLink bridge:** NV4 topology (4-link bridge) — 56 GB/s per direction, 112 GB/s aggregate. Required for tensor-parallel vLLM TP=2; without NVLink, CUDA sees two isolated GPUs
 - **Usable VRAM:** ~19,190 MiB per card after ECC overhead
 - **Power:** Dell 825W internal PSU (primary) + external Corsair ATX 3.0 1000W PSU via SATA sync/trigger board for GPU supplemental power
 
 ### CPU & Memory
-- **CPU:** Intel Xeon E5-2600 series (T5810 platform)
-- **PCIe:** Gen 3/4 slots for dual-GPU installation
+- **CPU:** Intel Xeon E5-2699v4 — 22 cores / 44 threads, Broadwell-EP
+- **Build performance:** kernel 6.18 at `-j44` in ~5 min; full `@world` (250 packages) in ~90 min; peak RAM during Node.js/V8 compile ~48GB
+- **PCIe:** Gen 3 slots for dual-GPU installation
 
 ### Operating System
 - **OS:** Gentoo Linux (custom compiled kernel)
@@ -31,7 +32,7 @@
 - **Port:** 8004 (LAN only — not exposed to internet)
 - **Tensor Parallel:** Both A4500s in tensor-parallel mode (TENSOR_PARALLEL_SIZE=2)
 - **Context window:** 16,384 tokens (PSCODE_MAX_MODEL_LEN=16384)
-- **GPU utilization target:** 90% (PSCODE_GPU_UTIL=0.90; lowered from 95% to prevent OOM with LightDM using small VRAM slice)
+- **GPU utilization target:** 93% (PSCODE_GPU_UTIL=0.93; 0.90 too tight for vLLM v0.14.0 KV cache at 16K context; 0.95 OOM with CUDA graphs)
 - **Enforce eager:** Enabled (PSCODE_ENFORCE_EAGER=1) — disabling would enable CUDA graphs for faster inference at cost of ~1 GB VRAM
 
 ### Qdrant Vector Database
