@@ -26,6 +26,8 @@ RERANK_URL = "http://127.0.0.1:8006"
 # not to pick the best 5. The CPU cross-encoder (T5810:8006) closes that gap.
 RAG_RETRIEVE_LIMIT = 15   # candidates from Qdrant (bi-encoder cosine); ~3s CPU rerank
 RAG_TOP_K = 5             # final chunks after cross-encoder reranking
+RAG_MAX_PER_DOC = 1       # cap chunks from one source doc in the final context, so a
+                          # multi-chunk doc (e.g. the resume) can't hog the top-5
 
 # Persistent client — avoids TCP hand-shake overhead on every request
 _http: httpx.AsyncClient | None = None
@@ -71,29 +73,53 @@ async def search(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _cap_per_doc(ranked: list, top_k: int) -> list:
+    """Take top_k from a ranked list, allowing at most RAG_MAX_PER_DOC chunks per
+    source doc so one multi-chunk doc can't dominate the context. Backfills with
+    overflow chunks if there aren't enough distinct docs to fill top_k."""
+    out, counts, overflow = [], {}, []
+    for p in ranked:
+        key = p.get("doc_id") or p.get("title")
+        if counts.get(key, 0) < RAG_MAX_PER_DOC:
+            out.append(p)
+            counts[key] = counts.get(key, 0) + 1
+            if len(out) == top_k:
+                return out
+        else:
+            overflow.append(p)
+    for p in overflow:                 # backfill only if too few distinct docs
+        if len(out) == top_k:
+            break
+        out.append(p)
+    return out
+
+
 async def rerank_documents(query: str, payloads: list, top_k: int) -> list:
-    """Re-score retrieved chunks with the CPU cross-encoder (T5810:8006); return best top_k.
-    Fails open: if the reranker is unavailable, fall back to the cosine order's top_k so
-    chat never breaks on a reranker outage."""
+    """Re-score retrieved chunks with the CPU cross-encoder (T5810:8006), then take the
+    best top_k capped at RAG_MAX_PER_DOC chunks per source doc (diversity — keeps one
+    doc like the resume from hogging the top-5). Fails open: on reranker error, fall
+    back to the cosine order (still per-doc capped) so chat never breaks."""
     if not payloads:
         return payloads
     try:
         documents = [p.get("content", "") for p in payloads]
+        # Ask the reranker to rank ALL candidates so we can apply the per-doc cap here.
         resp = await _http.post(
             f"{RERANK_URL}/rerank",
-            json={"query": query, "documents": documents, "top_k": top_k},
+            json={"query": query, "documents": documents, "top_k": len(documents)},
             timeout=10.0,
         )
         if resp.status_code != 200:
             logger.error(f"Rerank failed: {resp.status_code}; falling back to cosine top-{top_k}")
-            return payloads[:top_k]
+            return _cap_per_doc(payloads, top_k)
         results = resp.json().get("results", [])
-        reranked = [payloads[r["index"]] for r in results]
-        logger.info(f"Reranked {len(payloads)} candidates -> top {len(reranked)}")
-        return reranked
+        ranked = [payloads[r["index"]] for r in results]
+        final = _cap_per_doc(ranked, top_k)
+        logger.info(f"Reranked {len(payloads)} candidates -> top {len(final)} (max {RAG_MAX_PER_DOC}/doc)")
+        return final
     except Exception as e:
         logger.error(f"Rerank error: {e}; falling back to cosine top-{top_k}")
-        return payloads[:top_k]
+        return _cap_per_doc(payloads, top_k)
 
 
 async def search_knowledge_base(query: str, retrieve_limit: int = RAG_RETRIEVE_LIMIT,
