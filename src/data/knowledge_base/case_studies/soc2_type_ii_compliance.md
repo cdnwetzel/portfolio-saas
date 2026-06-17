@@ -103,6 +103,10 @@ Built a monthly audit checklist:
 **Time:** 2-3 hours per month.  
 **Proof:** Dated evidence file (screenshot of audit results, log of checks, notes on anything unusual).
 
+### Why Monthly: The 90-Day Rolling Lookback
+
+SOC2 Type II (unlike Type I) isn't a snapshot — auditors sample a continuous **90-day rolling window** of evidence. Each new day enters the window; each day older than 90 drops off. The hard implication: **you can't retroactively fix a control failure from 91 days ago** — the control has to actually work, every day, throughout the period. That's exactly why the monthly review matters: drift caught on day 20 is fixable; the same drift discovered at audit time, 91 days later, is an audit finding. Weekly evidence collection plus the monthly internal review keep the rolling window clean.
+
 ---
 
 ## Key Decisions
