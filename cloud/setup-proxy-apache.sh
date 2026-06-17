@@ -97,13 +97,18 @@ cat > /etc/apache2/sites-available/dev.cwetzel.com.conf <<'EOF'
         </Location>
     </IfModule>
 
-    # React static files
-    <IfModule mod_expires.c>
-        ExpiresActive On
-        ExpiresByType text/html "access plus 1 hour"
-        ExpiresByType application/javascript "access plus 1 year"
-        ExpiresByType text/css "access plus 1 year"
-        ExpiresByType image/* "access plus 1 year"
+    # Cache policy for the SPA. index.html must always revalidate so new
+    # deploys take effect immediately — it points at content-hashed asset
+    # bundles. Caching HTML (even 1 hour) makes browsers keep loading a stale
+    # bundle after a deploy, which silently breaks newly-shipped fixes.
+    <IfModule mod_headers.c>
+        <FilesMatch "index\.html$">
+            Header set Cache-Control "no-cache, must-revalidate"
+        </FilesMatch>
+        # Content-hashed assets are immutable — filename changes every build.
+        <FilesMatch "\.(js|css|woff2?|png|svg|jpe?g|gif|ico)$">
+            Header set Cache-Control "public, max-age=31536000, immutable"
+        </FilesMatch>
     </IfModule>
 
     # SPA routing: all non-API requests go to index.html
