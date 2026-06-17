@@ -1,5 +1,7 @@
 # Implementation Roadmap — From Framework to Launch
 
+> **⚠️ Historical planning doc.** Reflects the original GATE-0/1 vision (Llama 2 70B, multi-tenant SaaS). What shipped is a portfolio RAG chat on **Qwen2.5-Coder-14B (BF16, 16K) + pscode-prod LoRA**. See CLAUDE.md for current architecture.
+
 **Status:** GATE 0 Complete, Professional Context Captured, Ready to Begin GATE 1  
 **Date:** 2026-06-06  
 **Repository:** github.com/cdnwetzel/portfolio-ai-saas (Private)

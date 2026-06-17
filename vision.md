@@ -1,5 +1,7 @@
 # Vision: Portfolio AI SaaS
 
+> **⚠️ Historical planning doc.** Reflects the original GATE-0/1 vision (Llama 2 70B, multi-tenant SaaS). What shipped is a portfolio RAG chat on **Qwen2.5-Coder-14B (BF16, 16K) + pscode-prod LoRA**. See CLAUDE.md for current architecture.
+
 ## Problem We're Solving
 
 Recruiters want to understand a candidate's technical depth in **seconds**, not by reading a static resume. Traditional AI portfolio tools outsource inference to expensive APIs (OpenAI $0.30/1k tokens, Anthropic $0.80/1k tokens). This creates a scaling problem for SaaS: high CAC, low margins, vendor lock-in.

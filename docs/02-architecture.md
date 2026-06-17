@@ -1,5 +1,7 @@
 # Architecture Document (Day 30 MVP)
 
+> **⚠️ Historical planning doc.** The Llama 2 70B model, VRAM math, and "Why Llama 70B" analysis below reflect the original GATE-1 design. What shipped is a portfolio RAG chat on **Qwen2.5-Coder-14B (BF16, 16K) + pscode-prod LoRA** with a cosine→rerank pipeline. See CLAUDE.md for current architecture.
+
 **Project:** Portfolio AI SaaS  
 **Scope:** Website + AI Chat Demo (No SaaS features)  
 **Date:** 2026-06-06  

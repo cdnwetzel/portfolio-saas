@@ -11,7 +11,7 @@
 ## What Was Built
 
 ### Core Infrastructure
-- **Model:** Qwen2.5-Coder-32B-Instruct-AWQ (deployed on T5810)
+- **Model:** Qwen2.5-Coder-14B (BF16, 16K context) + pscode-prod LoRA, deployed on T5810. (A 32B-AWQ build was trialed — see Stage 2 below — but reverted; the 14B fits BF16 with KV headroom and runs faster.)
 - **Inference:** vLLM with tensor parallelism (2x A4500 GPUs)
 - **Embedding:** all-MiniLM-L6-v2 (384-dim) via embed-service on port 8005
 - **Vector DB:** Qdrant with 1,056 documented points
@@ -48,11 +48,12 @@
 - top_p: 0.9 → 0.7 (eliminate long-tail creative tokens)
 - **Result:** 6/12 → 6/12 (baseline established, grounding improved)
 
-### Stage 2: Model Upgrade
+### Stage 2: Model Upgrade (trialed, later reverted)
 - Qwen2.5-Coder-14B → Qwen2.5-Coder-32B-Instruct-AWQ
 - vLLM flags: Added `--trust-remote-code`, `--max-num-seqs 16`, `--enforce-eager`
 - VRAM: 20GB model weight + 8GB KV cache + 7GB headroom (safe on dual 20GB A4500)
 - **Result:** 6/12 → 7/12 (+1 test, instruction-following improved)
+- **Reverted:** production runs **Qwen2.5-Coder-14B (BF16, 16K) + pscode-prod LoRA** — the 14B fits BF16 with KV headroom, runs faster, and `--max-num-seqs` was found counterproductive for single-user. This historical record is kept intentionally; see CLAUDE.md for current config.
 
 ### Stage 3: Prompt Relaxation
 - Shifted from "don't mention these tools" → "prioritize documented tools"

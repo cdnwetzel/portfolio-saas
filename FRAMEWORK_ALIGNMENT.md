@@ -1,5 +1,7 @@
 # Framework Alignment Report
 
+> **⚠️ Historical planning doc.** Reflects the original GATE-0/1 vision (Llama 2 70B, multi-tenant SaaS). What shipped is a portfolio RAG chat on **Qwen2.5-Coder-14B (BF16, 16K) + pscode-prod LoRA**. See CLAUDE.md for current architecture.
+
 **Project:** Portfolio AI SaaS  
 **Framework:** psplan 5-Gate Workflow (`/Users/cwetzel/ai/psaios/psplan/`)  
 **Report Date:** 2026-06-06  
