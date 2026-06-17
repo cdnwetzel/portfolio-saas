@@ -176,7 +176,8 @@ async def websocket_chat(websocket: WebSocket):
                 logger.info(f"History compacted: {before} → {len(messages)} messages")
 
             context_docs = await search_knowledge_base(user_query)
-            logger.info(f"RAG: {len(context_docs)} docs for query: {user_query[:100]}")
+            # red-lines.md #2: never log query content. Metadata only.
+            logger.info(f"RAG: {len(context_docs)} docs retrieved ({len(user_query)}-char query)")
             for i, doc in enumerate(context_docs, 1):
                 logger.info(f"  {i}. {doc.get('title')} ({doc.get('source')})")
 

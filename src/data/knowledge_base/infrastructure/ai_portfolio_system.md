@@ -82,6 +82,19 @@ This enables real-time streaming: tokens appear as fast as the model generates t
 
 ---
 
+## Security & Privacy
+
+The threat model is intentionally small — scoping decisions remove most classic web-app risks by construction:
+
+- **No user data, no PII.** The knowledge base holds only public portfolio content — resume, case studies, LinkedIn posts, infrastructure write-ups. There are no visitor accounts, no customer records, no personal data collected.
+- **No authentication needed.** The chat serves read-only public information about my career. Nothing a visitor does writes to a database, so there are no logins, passwords, or user records to protect.
+- **Queries are not logged or stored.** The proxy logs only metadata — retrieval counts, timing, grounding status — never the content of a visitor's question or the model's response. Per-session chat history lives in the browser's localStorage only; nothing is persisted server-side.
+- **Backend isolation.** vLLM (8004), Qdrant (6333), the embedding service (8005), and the reranker (8006) all bind to localhost on the T5810 and have no internet-facing ports. The public VPS reaches them only over an SSH tunnel with key-based auth.
+- **Transport security.** All browser traffic is HTTPS/WSS with Let's Encrypt certificates, terminated at Apache on the VPS; the VPS↔home link is SSH-encrypted.
+- **Bounded inputs.** Inference requests are capped at a maximum prompt length to prevent resource-exhaustion abuse.
+
+---
+
 ## Total Monthly Cost
 
 - Cloud VPS (cwetzel.com): ~$20/month
