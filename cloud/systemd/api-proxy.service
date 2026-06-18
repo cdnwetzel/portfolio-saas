@@ -1,0 +1,20 @@
+[Unit]
+Description=Portfolio AI API Proxy
+After=network.target
+
+[Service]
+Type=simple
+User=apiproxy
+Group=apiproxy
+WorkingDirectory=/opt/api-proxy
+# Runs cloud/api-proxy.py, deployed to /opt/api-proxy/main.py (see cloud/deploy.sh).
+ExecStart=/usr/bin/python3 -m uvicorn main:app --host 127.0.0.1 --port 8000 --log-level info
+
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=api-proxy
+
+[Install]
+WantedBy=multi-user.target

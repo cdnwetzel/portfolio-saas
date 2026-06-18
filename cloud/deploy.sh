@@ -1,60 +1,37 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+# Deploy the Portfolio AI chat to production (cwetzel.com VPS).
+#   Frontend: build React  -> rsync to /var/www/dev.cwetzel.com/
+#   Backend:  api-proxy.py -> /opt/api-proxy/main.py (+ context_manager.py) -> restart
+#
+# Separate from this script:
+#   - Vector index:  scripts/reindex_kb.sh         (rebuild Qdrant from committed KB)
+#   - VPS infra:     cloud/setup-proxy-apache.sh    (apache vhost, cache headers, SSL)
+#                    cloud/systemd/*.service         (api-proxy + SSH tunnel units)
+#   - T5810 svcs:    home/setup-t5810-services.sh    (embed + rerank services)
+#
+# Usage:  ./cloud/deploy.sh
+# Env:    CLOUD_HOST (default root@cwetzel.com)
+set -euo pipefail
 
-echo "🚀 Starting deployment to production..."
+CLOUD="${CLOUD_HOST:-root@cwetzel.com}"
+WEBROOT="/var/www/dev.cwetzel.com"
+APIDIR="/opt/api-proxy"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "${HERE}/.." && pwd)"
 
-# Colors for output
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
+echo "==> Building frontend"
+( cd "${REPO}/frontend" && npm run build )
 
-# Configuration
-CLOUD_USER=${CLOUD_USER:-ubuntu}
-CLOUD_IP=${CLOUD_IP:-your.cloud.ip.address}
-SSH_KEY=${SSH_KEY:-~/.ssh/deploy}
+echo "==> Deploying frontend -> ${CLOUD}:${WEBROOT}"
+rsync -avz --delete "${REPO}/frontend/dist/" "${CLOUD}:${WEBROOT}/"
 
-# 1. Build Frontend (if exists)
-if [ -d "frontend" ]; then
-  echo -e "${YELLOW}📦 Building React frontend...${NC}"
-  cd frontend && npm run build && cd ..
-fi
+echo "==> Deploying backend proxy -> ${CLOUD}:${APIDIR}"
+# cloud/api-proxy.py deploys as main.py (uvicorn main:app); context_manager.py is imported by it.
+scp -q "${HERE}/api-proxy.py"       "${CLOUD}:${APIDIR}/main.py"
+scp -q "${HERE}/context_manager.py" "${CLOUD}:${APIDIR}/context_manager.py"
+ssh "${CLOUD}" "chown apiproxy:apiproxy ${APIDIR}/main.py ${APIDIR}/context_manager.py && \
+  systemctl restart api-proxy.service && sleep 2 && systemctl is-active api-proxy.service"
 
-# 2. Sync Backend Code
-echo -e "${YELLOW}📤 Syncing backend code...${NC}"
-rsync -avz \
-    -e "ssh -i ${SSH_KEY}" \
-    src/ requirements.txt Dockerfile docker-compose.yml \
-    ${CLOUD_USER}@${CLOUD_IP}:/opt/portfolio-saas/
-
-# 3. Remote Operations
-echo -e "${YELLOW}⚙️ Running remote deployment...${NC}"
-ssh -i ${SSH_KEY} ${CLOUD_USER}@${CLOUD_IP} << 'REMOTE_EOF'
-    set -e
-
-    cd /opt/portfolio-saas
-
-    # Copy environment if exists
-    if [ -f .env.prod ]; then
-        cp .env.prod .env
-    fi
-
-    # Build and start containers
-    echo "Starting Docker containers..."
-    docker-compose up -d --build
-
-    # Wait for services
-    sleep 5
-
-    # Run migrations
-    echo "Running database migrations..."
-    docker-compose exec -T api alembic upgrade head || true
-
-    # Clean up
-    docker image prune -f
-
-    echo "Deployment complete!"
-REMOTE_EOF
-
-echo -e "${GREEN}✅ Deployment successful!${NC}"
-echo -e "${GREEN}Check https://app.yourdomain.com${NC}"
+echo "==> Health check"
+ssh "${CLOUD}" "curl -sf http://127.0.0.1:8000/health && echo" || { echo "✗ HEALTH CHECK FAILED"; exit 1; }
+echo "==> Deployed: https://dev.cwetzel.com"

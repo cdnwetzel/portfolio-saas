@@ -1,95 +1,40 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+# Provision the Portfolio AI CPU services on the T5810 (Gentoo / OpenRC) from this repo:
+#   - embed-service  (all-MiniLM-L6-v2, port 8005)
+#   - rerank-service (bge-reranker-base, port 8006)
+# Both run as the `chris` user via supervise-daemon. Models download from HuggingFace
+# on first start (or use the existing ~/.cache if present).
+#
+# NOT managed here (separate concerns, their own OpenRC services on the T5810):
+#   - pscode-vllm (8004)  — the Qwen2.5-Coder-14B + pscode-prod LoRA server
+#   - Qdrant (6333)       — vector DB
+#
+# Run from the repo root on a machine with SSH access to the T5810.
+# Usage:  ./home/setup-t5810-services.sh
+# Env:    T5810_HOST (default root@10.0.1.125)
+set -euo pipefail
 
-echo "=== T5810 vLLM + Qdrant Setup ==="
+T5810="${T5810_HOST:-root@10.0.1.125}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
 
-# Setup hostname resolution for ai.cwetzel.com (self-reference)
-if ! grep -q "ai.cwetzel.com" /etc/hosts; then
-    echo "127.0.0.1 ai.cwetzel.com" >> /etc/hosts
-fi
+install_service() {
+  local name="$1" src="$2" pyfile="$3" initfile="$4" optdir="$5"
+  echo "==> Installing ${name} -> ${optdir}"
+  ssh "${T5810}" "mkdir -p ${optdir}"
+  scp -q "${src}/${pyfile}"   "${T5810}:${optdir}/${pyfile}"
+  scp -q "${src}/${initfile}" "${T5810}:/tmp/${name}.openrc"
+  ssh "${T5810}" "
+    set -e
+    chown -R chris:chris ${optdir} && chmod +x ${optdir}/${pyfile}
+    cp /tmp/${name}.openrc /etc/init.d/${name} && chmod 755 /etc/init.d/${name}
+    rc-update add ${name} default 2>/dev/null || true
+    rc-service ${name} restart 2>/dev/null || rc-service ${name} start
+  "
+}
 
-# Create service user
-useradd -m -s /bin/bash -d /home/vllm vllm 2>/dev/null || true
+install_service embed-service  "${HERE}/embed-service"  embed.py  embed-service.openrc  /opt/embed-service
+install_service rerank-service "${HERE}/rerank-service" rerank.py rerank-service.openrc /opt/rerank-service
 
-# Create directories
-mkdir -p /opt/vllm /opt/qdrant /var/log/vllm /var/log/qdrant
-chown vllm:vllm /opt/vllm /opt/qdrant /var/log/vllm /var/log/qdrant
-
-# Install Python deps (if not already installed)
-pip install vllm torch transformers --no-cache-dir 2>/dev/null || true
-
-# === vLLM Service ===
-cat > /etc/systemd/system/vllm-qwen.service <<'EOF'
-[Unit]
-Description=vLLM Qwen 14B Inference Server
-After=network.target
-StartLimitInterval=200
-StartLimitBurst=5
-
-[Service]
-Type=simple
-User=vllm
-Group=vllm
-WorkingDirectory=/opt/vllm
-Environment="PATH=/usr/local/bin:/usr/bin:/bin"
-Environment="CUDA_VISIBLE_DEVICES=0,1"
-Environment="VLLM_TENSOR_PARALLEL_SIZE=2"
-ExecStart=/usr/local/bin/python -m vllm.entrypoints.openai.api_server \
-  --model Qwen/Qwen2.5-14B \
-  --port 8001 \
-  --dtype bfloat16 \
-  --max-model-len 8192 \
-  --tensor-parallel-size 2 \
-  --gpu-memory-utilization 0.85
-
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=vllm
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# === Qdrant Service ===
-cat > /etc/systemd/system/qdrant.service <<'EOF'
-[Unit]
-Description=Qdrant Vector Database
-After=network.target
-StartLimitInterval=200
-StartLimitBurst=5
-
-[Service]
-Type=simple
-User=vllm
-Group=vllm
-WorkingDirectory=/opt/qdrant
-ExecStart=/usr/local/bin/qdrant --listen-addr 0.0.0.0:6333 --storage-path /opt/qdrant/storage
-
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=qdrant
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Reload and enable services
-systemctl daemon-reload
-systemctl enable vllm-qwen.service qdrant.service
-systemctl restart vllm-qwen.service qdrant.service
-
-echo "Waiting for services to start..."
-sleep 5
-
-echo "=== Service Status ==="
-systemctl status vllm-qwen.service --no-pager || true
-systemctl status qdrant.service --no-pager || true
-
-echo "=== Port Status ==="
-netstat -tlnp 2>/dev/null | grep -E ':(8001|6333)' || ss -tlnp 2>/dev/null | grep -E ':(8001|6333)' || echo "Ports not yet listening (services starting)"
-
-echo "✓ Setup complete. vLLM on :8001, Qdrant on :6333"
+echo "==> Verifying health"
+ssh "${T5810}" 'for p in 8005 8006; do printf "  port %s: " "$p"; curl -sf http://127.0.0.1:$p/health && echo || echo UNREACHABLE; done'
+echo "==> Done. embed-service (8005) + rerank-service (8006) provisioned."
