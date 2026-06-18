@@ -35,9 +35,13 @@ RAG_RETRIEVE_LIMIT = 15   # candidates from Qdrant (bi-encoder cosine); ~3s CPU 
 RAG_TOP_K = 5             # final chunks after cross-encoder reranking
 RAG_MAX_PER_DOC = 1       # cap chunks from one source doc in the final context, so a
                           # multi-chunk doc (e.g. the resume) can't hog the top-5
-RAG_MIN_SCORE = 0.35      # if the top retrieved chunk scores below this, refuse rather
-                          # than hallucinate. Tuned for all-MiniLM-L6-v2 cosine; the
-                          # reranker later re-orders the final top-5.
+RAG_MIN_SCORE = 0.0       # DISABLED. The guardrail below compares the *reranker* score,
+                          # but 0.35 was tuned for all-MiniLM *cosine* — a different scale.
+                          # bge-reranker scores here are ~0.0-0.08, so 0.35 refused EVERY
+                          # query (P1, 2026-06-18). Reranker scores aren't a calibrated 0-1
+                          # relevance probability; a fixed threshold is fragile. The grounding
+                          # system prompt already refuses off-topic queries. Re-enable only
+                          # with a threshold calibrated from selftest's observed distribution.
 
 # Persistent client — avoids TCP hand-shake overhead on every request
 _http: httpx.AsyncClient | None = None
