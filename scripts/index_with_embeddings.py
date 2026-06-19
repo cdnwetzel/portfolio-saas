@@ -1,7 +1,7 @@
 #!/home/chris/miniforge3/bin/python3
 """
 Knowledge base indexer with semantic embeddings.
-Generates real 384-dim vectors for each chunk using all-MiniLM-L6-v2.
+Generates real 768-dim vectors for each chunk using BAAI/bge-base-en-v1.5.
 No more manual weight tuning — semantic similarity handles relevance.
 """
 
@@ -124,7 +124,7 @@ def load_documents(kb_path: str) -> List[Dict]:
     return docs
 
 def create_collection(qdrant_url: str, collection_name: str) -> bool:
-    """Create Qdrant collection with 384-dim vectors for semantic search."""
+    """Create Qdrant collection with 768-dim vectors for semantic search."""
     try:
         resp = requests.get(f"{qdrant_url}/collections/{collection_name}")
         if resp.status_code == 200:
@@ -136,13 +136,13 @@ def create_collection(qdrant_url: str, collection_name: str) -> bool:
     try:
         payload = {
             "vectors": {
-                "size": 384,  # all-MiniLM-L6-v2 produces 384-dim embeddings
+                "size": 768,  # BAAI/bge-base-en-v1.5 produces 768-dim embeddings
                 "distance": "Cosine",
             }
         }
         resp = requests.put(f"{qdrant_url}/collections/{collection_name}", json=payload)
         if resp.status_code == 200:
-            logger.info(f"✓ Created collection '{collection_name}' with size 384")
+            logger.info(f"✓ Created collection '{collection_name}' with size 768")
             return True
         else:
             logger.error(f"✗ Failed to create collection: {resp.status_code}")
@@ -171,8 +171,8 @@ def index_documents(qdrant_url: str, docs: List[Dict], collection_name: str = "d
         return False
 
     # Load embedding model on CPU (vLLM is using GPU)
-    logger.info("Loading all-MiniLM-L6-v2 embedding model (CPU)...")
-    model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
+    logger.info("Loading BAAI/bge-base-en-v1.5 embedding model (CPU)...")
+    model = SentenceTransformer('BAAI/bge-base-en-v1.5', device='cpu')
     logger.info("✓ Model loaded on CPU")
 
     points = []
@@ -193,7 +193,7 @@ def index_documents(qdrant_url: str, docs: List[Dict], collection_name: str = "d
 
             points.append({
                 "id": point_id,
-                "vector": embedding,  # Real 384-dim semantic vector
+                "vector": embedding,  # Real 768-dim semantic vector
                 "payload": {
                     "doc_id": doc["id"],
                     "title": doc["title"],
@@ -206,7 +206,7 @@ def index_documents(qdrant_url: str, docs: List[Dict], collection_name: str = "d
             })
             point_id += 1
 
-        logger.info(f"  → {doc['title']}: {len(chunks)} chunks → {len(chunks) * 384} vector dims")
+        logger.info(f"  → {doc['title']}: {len(chunks)} chunks → {len(chunks) * 768} vector dims")
 
     # Upload all points
     try:
@@ -218,7 +218,7 @@ def index_documents(qdrant_url: str, docs: List[Dict], collection_name: str = "d
         )
         if resp.status_code == 200:
             logger.info(f"✓ Indexed {len(points)} chunks across {len(docs)} documents")
-            logger.info(f"✓ Total semantic vectors: {len(points) * 384:,} dimensions")
+            logger.info(f"✓ Total semantic vectors: {len(points) * 768:,} dimensions")
             return True
         else:
             logger.error(f"✗ Failed to index: {resp.status_code} {resp.text[:200]}")
