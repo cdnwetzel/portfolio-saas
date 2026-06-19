@@ -34,6 +34,8 @@ Machines don't drift silently because changes are committed. If I rebuild the T5
 
 All running machines use Gentoo Linux with OpenRC (not systemd). Target kernel: 6.18 LTS series.
 
+**Why OpenRC over systemd:** it's a deliberate choice, not dogma. OpenRC's dependency-based init is small, transparent, and shell-scriptable — easy to read the exact start/stop logic for a GPU inference service, tune startup ordering (e.g. NVLink precondition checks before vLLM starts), and debug without a binary journal. On single-purpose, hand-tuned machines like these, that transparency and minimalism is worth more than systemd's feature breadth. systemd is a fine default for fleets that need its ecosystem; for this homelab, OpenRC keeps the stack legible and lightweight. (The cloud VPS, by contrast, runs Ubuntu + systemd — the right tool there.)
+
 ---
 
 ## Repository Structure

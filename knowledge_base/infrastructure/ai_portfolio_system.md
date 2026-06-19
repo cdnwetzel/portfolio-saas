@@ -137,6 +137,12 @@ Comparable cloud GPU inference (2× A4500 equivalent) would cost $3-5/hour. At m
 | Top-p | 0.7 |
 | Presence penalty | 0.5 |
 
+### Speed (measured)
+
+- **Generation throughput:** ~6 tokens/sec (BF16 14B, tensor-parallel on the A4500 pair). Measured ~48s for a 300-token answer.
+- **Time to first token:** a few seconds — the RAG pre-step (embed → Qdrant search → CPU rerank) adds roughly 3–4s before the model starts, then prefill, then streaming begins.
+- **End-to-end per query:** short answers/refusals land in ~7s; typical grounded answers run ~20–50s; long, detailed answers can reach ~100s. It's tuned for grounded quality on a single-user portfolio demo, not raw speed — the GPUs are the bottleneck and that's an accepted trade-off.
+
 ---
 
 ## Ports & Services
