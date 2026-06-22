@@ -37,14 +37,18 @@ RERANK_URL = "http://127.0.0.1:8006"
 # message list so cwdotcom never user-facing breaks on Headroom's behalf.
 COMPRESS_URL = os.environ.get("COMPRESS_URL", "").rstrip("/")
 COMPRESS_TIMEOUT = float(os.environ.get("COMPRESS_TIMEOUT", "3.0"))
-# How much of the original to KEEP. 0.5 = keep 50% (target 50% savings). Lower
-# values are more aggressive but risk losing detail on narrow-fact queries —
-# 0.1 caused the "What GPUs does Chris run" answer to regress to 41 chars in
-# initial testing because the GPU specifics got squeezed out. Tune via the
-# systemd drop-in without redeploy. Default 0.5 is the safe-but-still-useful spot.
+# target_ratio / protect_recent — sent to the headroom-lib service per request.
+# These are HINTS to the structural compressors' "is it worth compressing this"
+# gates, NOT a ceiling on compression aggressiveness. Empirical finding:
+# Headroom's ML text compressor (kompress) ignores target_ratio and produces
+# its own learned ratio (~8% of original) regardless, which over-compresses
+# for cwdotcom's narrow-fact RAG queries. To work around this, the headroom-lib
+# service on T5810 runs with HEADROOM_DISABLE_KOMPRESS=1 (kompress off,
+# structural-only). Result: 47% real savings, full answer detail preserved.
+# Keeping these env knobs in case structural compressors honor them more
+# strictly in future, or a future caller pointed at a kompress-on service
+# wants to tune aggressiveness. Defaults are conservative.
 COMPRESS_TARGET_RATIO = float(os.environ.get("COMPRESS_TARGET_RATIO", "0.5"))
-# How many trailing turns to skip compression on. cwdotcom is single-turn,
-# so 0 is correct here; a multi-turn caller might want 2-4.
 COMPRESS_PROTECT_RECENT = int(os.environ.get("COMPRESS_PROTECT_RECENT", "0"))
 
 # RAG retrieval: pull a wide candidate set via cosine, then rerank to the best few.
