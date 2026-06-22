@@ -97,3 +97,7 @@ scripts/cwdotcom-api.initd
 
 # KB subdirs not tracked in git
 knowledge_base/pxx_docs/
+
+# Diagnostic venv (T5810) + run output
+.venv-diag/
+diagnostic-battery-results.json
