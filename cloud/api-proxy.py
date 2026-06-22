@@ -5,6 +5,7 @@ WebSocket chat with RAG pipeline: embed → Qdrant search → vLLM stream.
 import asyncio
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -28,6 +29,14 @@ VLLM_URL   = os.environ.get("VLLM_URL", "http://127.0.0.1:8004")
 QDRANT_URL = "http://127.0.0.1:6333"
 EMBED_URL  = "http://127.0.0.1:8005"
 RERANK_URL = "http://127.0.0.1:8006"
+# Optional input-token compression via the headroom-lib service on T5810,
+# reached via the existing portfolio-ai-tunnel ssh -L forward. Default
+# empty = disabled (no behavior change on this VPS). To enable, set in
+# /etc/systemd/system/api-proxy.service: Environment=COMPRESS_URL=http://127.0.0.1:8788
+# Failure is non-fatal: any error / timeout falls back to the uncompressed
+# message list so cwdotcom never user-facing breaks on Headroom's behalf.
+COMPRESS_URL = os.environ.get("COMPRESS_URL", "").rstrip("/")
+COMPRESS_TIMEOUT = float(os.environ.get("COMPRESS_TIMEOUT", "3.0"))
 
 # RAG retrieval: pull a wide candidate set via cosine, then rerank to the best few.
 # MiniLM cosine is imprecise — good enough to surface candidates into the top-20,
@@ -272,6 +281,41 @@ KNOWLEDGE BASE:
             system_prompt += system_suffix
 
             messages = inject_system_prompt(messages, system_prompt)
+
+            # Optional: compress messages via the T5810 headroom-lib service.
+            # Tunnel: portfolio-ai-tunnel.service forwards 127.0.0.1:8788 →
+            # T5810:8788. Library mode (not the full proxy at :8787) is used
+            # because the proxy's prefix-freeze policy zeros out savings on
+            # single-turn 2-message RAG requests.
+            if COMPRESS_URL and _http is not None:
+                t0 = time.time()
+                try:
+                    cresp = await _http.post(
+                        f"{COMPRESS_URL}/compress",
+                        json={
+                            "messages": messages,
+                            "compress_user_messages": False,
+                            "target_ratio": 0.1,
+                            "protect_recent": 0,
+                        },
+                        timeout=COMPRESS_TIMEOUT,
+                    )
+                    if cresp.status_code == 200:
+                        cdata = cresp.json()
+                        if cdata.get("tokens_after", 0) < cdata.get("tokens_before", 0):
+                            messages = cdata["messages"]
+                            logger.info(
+                                f"Headroom: {cdata['tokens_before']}→{cdata['tokens_after']} "
+                                f"({cdata['saved_pct']:.1f}% saved) in "
+                                f"{(time.time() - t0) * 1000:.0f}ms"
+                            )
+                    else:
+                        logger.warning(
+                            f"Headroom compress returned {cresp.status_code}; falling back to uncompressed"
+                        )
+                except Exception as e:
+                    logger.warning(f"Headroom compress failed ({e!r}); falling back to uncompressed")
+
             body["messages"] = messages
 
             # Send sources to frontend for citation rendering.
