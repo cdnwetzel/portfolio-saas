@@ -7,25 +7,61 @@ No more manual weight tuning — semantic similarity handles relevance.
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import List, Dict
-import requests
-from sentence_transformers import SentenceTransformer
 import logging
+
+# Heavy/optional deps imported lazily so the pure chunking logic below is importable
+# (and unit-testable) on a machine without them. They ARE present in the T5810 indexer env.
+try:
+    import requests
+except ImportError:  # pragma: no cover
+    requests = None
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
+_HEADER_RE = re.compile(r'^#{1,6}\s')
+
+
+def _split_sections(text: str) -> List[str]:
+    """Split markdown into sections at header lines (#..######). Each section starts at
+    its header and runs to the next header; any preamble before the first header is its
+    own section. Keeps a header attached to its body for cleaner embeddings + citations."""
+    sections, current = [], []
+    for line in text.split('\n'):
+        if _HEADER_RE.match(line) and current:
+            sections.append('\n'.join(current))
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        sections.append('\n'.join(current))
+    return sections
+
+
 def chunk_text(text: str, chunk_size: int = 400, overlap: int = 50) -> List[str]:
-    """Split text into overlapping chunks by words."""
-    words = text.split()
-    chunks = []
-    for i in range(0, len(words), chunk_size - overlap):
-        chunk = ' '.join(words[i:i + chunk_size])
-        if chunk.strip():
-            chunks.append(chunk)
-    return chunks
+    """Structure-aware chunking (rag-improvements.md §2.2).
+
+    Split on markdown section boundaries so each chunk is a semantic unit; a section
+    that fits in chunk_size words becomes one atomic chunk, and an over-long section
+    falls back to the original overlapping word-window split. This produces cleaner
+    embeddings and citations than a blind 400-word window that straddles sections."""
+    chunks: List[str] = []
+    for section in _split_sections(text):
+        words = section.split()
+        if not words:
+            continue
+        if len(words) <= chunk_size:
+            chunks.append(section.strip())
+        else:
+            for i in range(0, len(words), chunk_size - overlap):
+                window = words[i:i + chunk_size]
+                if window:
+                    chunks.append(' '.join(window))
+    return [c for c in chunks if c.strip()]
 
 def load_documents(kb_path: str) -> List[Dict]:
     """Load all knowledge base documents."""
@@ -171,6 +207,7 @@ def index_documents(qdrant_url: str, docs: List[Dict], collection_name: str = "d
         return False
 
     # Load embedding model on CPU (vLLM is using GPU)
+    from sentence_transformers import SentenceTransformer  # lazy: heavy dep, T5810-only
     logger.info("Loading BAAI/bge-base-en-v1.5 embedding model (CPU)...")
     model = SentenceTransformer('BAAI/bge-base-en-v1.5', device='cpu')
     logger.info("✓ Model loaded on CPU")
