@@ -33,7 +33,8 @@ scp -q "${HERE}/api-proxy.py"        "${CLOUD}:${APIDIR}/main.py"
 scp -q "${HERE}/context_manager.py"  "${CLOUD}:${APIDIR}/context_manager.py"
 scp -q "${HERE}/query_expansion.py"  "${CLOUD}:${APIDIR}/query_expansion.py"
 scp -q "${HERE}/sparse_bm25.py"      "${CLOUD}:${APIDIR}/sparse_bm25.py"
-ssh "${CLOUD}" "chown apiproxy:apiproxy ${APIDIR}/main.py ${APIDIR}/context_manager.py ${APIDIR}/query_expansion.py ${APIDIR}/sparse_bm25.py && \
+scp -q "${HERE}/guardrails.py"       "${CLOUD}:${APIDIR}/guardrails.py"
+ssh "${CLOUD}" "chown apiproxy:apiproxy ${APIDIR}/main.py ${APIDIR}/context_manager.py ${APIDIR}/query_expansion.py ${APIDIR}/sparse_bm25.py ${APIDIR}/guardrails.py && \
   systemctl restart api-proxy.service && sleep 2 && systemctl is-active api-proxy.service"
 
 echo "==> Health check"
