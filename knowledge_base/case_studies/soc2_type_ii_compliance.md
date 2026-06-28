@@ -1,5 +1,7 @@
 # Case Study: SOC2 Type II Compliance Audit
 
+**Role:** Chris Wetzel — led this SOC 2 Type II compliance effort.
+
 **Organization:** Professional services firm, 40+ staff  
 **Timeline:** 6-month audit engagement, ongoing validation  
 **Scope:** IT infrastructure, access controls, data security  

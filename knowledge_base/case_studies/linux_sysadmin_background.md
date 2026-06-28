@@ -1,5 +1,7 @@
 # Linux System Administration Background
 
+**Role:** Chris Wetzel — this is my own hands-on Linux systems-administration background.
+
 ## Overview
 My Linux system administration experience spans 26+ years managing production infrastructure across enterprise environments. This background encompasses kernel-level customization, multi-machine configuration management, large-scale migrations, and distributed systems operations.
 

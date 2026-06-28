@@ -1,5 +1,7 @@
 # Case Study: VMware P2V Infrastructure Redesign (50+ Servers, Cost Reduction)
 
+**Role:** Chris Wetzel — led this VMware P2V infrastructure redesign.
+
 **Organization:** Mid-size technology company, 3 data center locations  
 **Timeline:** 6 months (planning + P2V conversion + cutover)  
 **Scope:** Migrate 50+ physical servers to virtual infrastructure across 3 sites  

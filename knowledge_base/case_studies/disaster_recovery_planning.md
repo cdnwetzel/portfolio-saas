@@ -1,5 +1,7 @@
 # Case Study: Disaster Recovery Planning (BDR, Off-Site Backup, Failover Testing)
 
+**Role:** Chris Wetzel — designed and implemented this disaster-recovery / BDR program.
+
 **Organization:** Mid-size professional services (law firm), sensitive client data  
 **Timeline:** 6-month planning + implementation + ongoing validation  
 **Scope:** Comprehensive DR for 5 on-premises servers + 2 cloud instances  

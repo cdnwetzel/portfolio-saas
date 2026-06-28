@@ -1,5 +1,7 @@
 # Case Study: Azure Virtual Desktop Migration (120 → 200 Users, Global Scale)
 
+**Role:** Chris Wetzel — led this Azure Virtual Desktop migration.
+
 **Organization:** Financial services firm, multi-site, global operations  
 **Timeline:** 4 months (planning + migration + stabilization)  
 **Scope:** 120 on-premises VDI users → Azure Virtual Desktop across 3 continents (North America, Europe, Asia-Pacific)  

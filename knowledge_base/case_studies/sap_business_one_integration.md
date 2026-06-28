@@ -1,5 +1,7 @@
 # Case Study: SAP Business One Integration with WMS (Global Deployment)
 
+**Role:** Chris Wetzel — led and delivered this SAP Business One + WMS global integration.
+
 **Organization:** Distribution company, 5 warehouses spanning 4 continents, 6 regions  
 **Warehouses by Continent:**
 - **North America** (2): NYC, Miami  

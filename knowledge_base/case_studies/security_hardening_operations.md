@@ -1,5 +1,7 @@
 # Security Hardening & Continuous Testing: Operational Controls
 
+**Role:** Chris Wetzel — designed and ran these security-hardening operations.
+
 ## Overview
 
 Security hardening is not a one-time configuration. It's an **operational discipline** combining:
