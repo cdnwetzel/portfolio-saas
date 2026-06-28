@@ -24,6 +24,26 @@
 
 ---
 
+## Second GPU Node — asrock B550 (Faithfulness Verifier)
+
+The GPU home lab is **two machines**, not one. Alongside the T5810, an **ASRock B550** box
+runs the out-of-band faithfulness verifier for the chat:
+- **CPU:** AMD Ryzen 9 5950X (16C/32T), 64 GB DDR4-3200
+- **GPU:** NVIDIA RTX 3060 Ti (8 GB) — the judge currently runs on CPU, so the card stays free
+- **OS:** Gentoo Linux / OpenRC
+- **Role:** hosts `verifier-service` (port 8007) + Ollama serving **Qwen2.5-7B** as an
+  *independent* faithfulness judge — deliberately a different model than the 14B, to avoid
+  self-grading bias. After every answer, the cloud proxy fire-and-forgets the answer + its
+  retrieved chunks here; the judge scores whether each claim is supported by the sources.
+  Fail-open: if this box is down, the chat is unaffected.
+- **Reachability:** LAN `10.0.1.115`; reached from the cloud VPS through the *same* SSH tunnel
+  that terminates on the T5810 — the T5810 routes port 8007 to asrock over the home LAN.
+
+So generation runs on the T5810 (A4500 pair) and continuous grounding-verification runs on the
+asrock B550 — two GPU boxes, one home lab.
+
+---
+
 ## AI Inference Stack
 
 ### vLLM (Primary LLM Serving)

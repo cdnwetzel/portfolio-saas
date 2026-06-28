@@ -2,13 +2,14 @@ import { useState } from 'react'
 
 const STACK = [
   { label: 'Model',      value: 'Qwen2.5-Coder 14B Instruct' },
-  { label: 'GPU',        value: '2× RTX A4500 20GB NVLink' },
+  { label: 'GPU',        value: '2× RTX A4500 20GB NVLink (T5810)' },
   { label: 'Inference',  value: 'vLLM (tensor parallel)' },
   { label: 'Context',    value: '16 384 tokens' },
-  { label: 'Vector DB',  value: 'Qdrant (cosine similarity)' },
-  { label: 'Embeddings', value: 'all-MiniLM-L6-v2' },
+  { label: 'Vector DB',  value: 'Qdrant (dense cosine)' },
+  { label: 'Embeddings', value: 'bge-base-en-v1.5 (768-d)' },
   { label: 'Reranker',   value: 'bge-reranker-base (CPU)' },
-  { label: 'Server',     value: 'Dell Precision T5810 (Gentoo)' },
+  { label: 'Verifier',   value: 'Qwen2.5-7B judge · 3060 Ti box (asrock)' },
+  { label: 'Servers',    value: 'T5810 + asrock B550 (Gentoo)' },
   { label: 'Frontend',   value: 'React + Vite + Tailwind' },
 ]
 
