@@ -10,11 +10,23 @@ import re
 from typing import List, Dict, Optional
 
 # Answers that contain no auditable factual claims → recorded as refusals, not scored.
+# Includes polite/safety refusals: triage showed the judge was fabricating claims from
+# these (e.g. inventing "I am Chris Wetzel" from an "I can't assist" answer) and flagging
+# correct refusals — the dominant false-positive class in the review queue.
 REFUSAL_MARKERS = (
     "don't have that documented",
     "do not have that documented",
     "conflicting information",
     "can only answer questions about chris wetzel",
+    "can't provide",
+    "cannot provide",
+    "can't assist with that",
+    "cannot assist with that",
+    "can't help with that",
+    "cannot help with that",
+    "i'm sorry, but i can't",
+    "i am sorry, but i can't",
+    "i'm sorry, but i cannot",
 )
 
 VALID_VERDICTS = {"supported", "unsupported", "contradicted"}

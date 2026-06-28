@@ -26,6 +26,15 @@ def test_is_refusal():
     assert not is_refusal("Chris runs two A4500 GPUs.")
 
 
+def test_is_refusal_polite_and_safety_refusals():
+    # Real flagged answers the judge was wrongly scoring (triage 2026-06-28).
+    assert is_refusal("I'm sorry, but I can't provide Chris Wetzel's phone number or personal email address.")
+    assert is_refusal("I'm sorry, but I can't assist with that request.")
+    assert is_refusal("I cannot provide that information.")
+    # A real grounded answer must still NOT read as a refusal.
+    assert not is_refusal("The home server runs Gentoo Linux with OpenRC.")
+
+
 def test_parse_judge_claims_valid():
     content = '{"claims":[{"text":"two A4500s","verdict":"supported","source":1}]}'
     claims = parse_judge_claims(content)
