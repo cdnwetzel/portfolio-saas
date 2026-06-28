@@ -18,9 +18,12 @@
 - **PCIe:** Gen 3 slots for dual-GPU installation
 
 ### Operating System
-- **OS:** Gentoo Linux (custom compiled kernel)
-- **Init:** OpenRC (not systemd)
+- **OS:** Gentoo Linux (custom compiled kernel) — the home server runs **Gentoo**, not Ubuntu
+- **Init:** OpenRC (**not** systemd)
 - **Services:** managed via rc-service, rc-update, /etc/conf.d/ environment files
+- **Do not confuse the two servers:** the **home server (T5810)** runs **Gentoo Linux + OpenRC**;
+  the separate **cloud VPS** (`cwetzel.com`) runs **Ubuntu + systemd**. The asrock B550 verifier
+  box also runs Gentoo/OpenRC. Only the public cloud VPS is Ubuntu/systemd.
 
 ---
 
