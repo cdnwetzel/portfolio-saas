@@ -23,18 +23,41 @@ OPTDIR="/opt/verifier-service"
 [ "$(id -u)" -eq 0 ] || { echo "Run as root (sudo)."; exit 1; }
 [ -d "$STAGE" ] || { echo "Staging dir $STAGE missing — Claude should re-stage the code."; exit 1; }
 
-echo "==> [1/4] GURU overlay"
-if ! eselect repository list -i 2>/dev/null | grep -qw guru; then
-  eselect repository enable guru
+echo "==> [1/4] GURU overlay (declarative repos.conf — no eselect-repository needed)"
+# asrock has git but not app-eselect/eselect-repository, so add GURU the IaC way:
+# a committed repos.conf entry + git sync. Idempotent.
+mkdir -p /etc/portage/repos.conf
+if [ ! -f /etc/portage/repos.conf/guru.conf ]; then
+  cat > /etc/portage/repos.conf/guru.conf <<'CONF'
+[guru]
+location = /var/db/repos/guru
+sync-type = git
+sync-uri = https://github.com/gentoo/guru.git
+auto-sync = yes
+CONF
 fi
 emaint sync -r guru
 
-echo "==> [2/4] emerge app-misc/ollama"
+echo "==> [2/4] app-misc/ollama"
 mkdir -p /etc/portage/package.accept_keywords
 echo "app-misc/ollama ~amd64" > /etc/portage/package.accept_keywords/ollama
+
+echo "    --- build plan (review before installing) ---"
+emerge -pv app-misc/ollama || true
+echo "    ---------------------------------------------"
+echo "    NOTE: GPU use on the 3060 Ti needs the 'cuda' USE flag, which can pull a"
+echo "    large CUDA toolkit. Review the plan above. CPU-only ollama also works (slower)."
+if [ "${CONFIRM:-0}" != "1" ]; then
+  echo ""
+  echo "    Nothing installed yet. GURU overlay is now synced. To proceed, re-run with:"
+  echo "        sudo CONFIRM=1 ./provision-verifier-asrock.sh"
+  echo "    (optionally first: echo 'app-misc/ollama cuda' >> /etc/portage/package.use/ollama  for GPU)"
+  exit 0
+fi
+
 emerge -q app-misc/ollama
-rc-update add ollama default 2>/dev/null || true
-rc-service ollama start || rc-service ollama restart
+[ -f /etc/init.d/ollama ] && { rc-update add ollama default 2>/dev/null || true; rc-service ollama start || rc-service ollama restart; } \
+  || echo "    NOTE: no /etc/init.d/ollama — start ollama however the ebuild documents."
 echo "    waiting for ollama API..."
 for _ in $(seq 1 30); do curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && break; sleep 2; done
 
