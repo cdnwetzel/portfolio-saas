@@ -19,14 +19,21 @@ def test_sections_split_on_headers():
     assert secs[2].startswith("## B")
 
 
-def test_short_sections_stay_atomic():
+def test_small_sections_merge_up_to_target():
+    # Two tiny sections merge into ONE chunk (don't emit tiny fragments).
     text = "## One\nshort one\n\n## Two\nshort two"
     chunks = chunk_text(text, chunk_size=400, overlap=50)
-    assert len(chunks) == 2
-    assert any("short one" in c for c in chunks)
-    assert any("short two" in c for c in chunks)
-    # a header's content does not bleed into the next section's chunk
-    assert not any("short one" in c and "short two" in c for c in chunks)
+    assert len(chunks) == 1
+    assert "short one" in chunks[0] and "short two" in chunks[0]
+
+
+def test_merge_breaks_when_target_exceeded():
+    # Each section ~30 words; with chunk_size=50, two sections overflow → split at header.
+    s = lambda h: f"## {h}\n" + " ".join(["w"] * 30)
+    text = s("A") + "\n\n" + s("B") + "\n\n" + s("C")
+    chunks = chunk_text(text, chunk_size=50, overlap=10)
+    assert len(chunks) >= 2
+    assert all(len(c.split()) <= 50 + 5 for c in chunks)  # ~target, header tokens slack
 
 
 def test_long_section_falls_back_to_word_windows():

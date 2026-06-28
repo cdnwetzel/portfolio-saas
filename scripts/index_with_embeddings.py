@@ -45,22 +45,43 @@ def _split_sections(text: str) -> List[str]:
 def chunk_text(text: str, chunk_size: int = 400, overlap: int = 50) -> List[str]:
     """Structure-aware chunking (rag-improvements.md §2.2).
 
-    Split on markdown section boundaries so each chunk is a semantic unit; a section
-    that fits in chunk_size words becomes one atomic chunk, and an over-long section
-    falls back to the original overlapping word-window split. This produces cleaner
-    embeddings and citations than a blind 400-word window that straddles sections."""
+    Prefer to break at markdown section headers, but GREEDILY MERGE consecutive small
+    sections up to ~chunk_size words so we don't emit tiny one-paragraph fragments
+    (splitting on every header over-fragments — measured 293 vs ~65 chunks with flat
+    grounding and worse citation). A section larger than chunk_size on its own falls
+    back to the original overlapping word-window split. Net: chunks sized like the
+    blind 400-word window, but aligned to section boundaries."""
     chunks: List[str] = []
+    buf_texts: List[str] = []
+    buf_words = 0
+
+    def flush():
+        nonlocal buf_texts, buf_words
+        if buf_texts:
+            merged = "\n\n".join(buf_texts).strip()
+            if merged:
+                chunks.append(merged)
+        buf_texts, buf_words = [], 0
+
     for section in _split_sections(text):
         words = section.split()
-        if not words:
+        n = len(words)
+        if n == 0:
             continue
-        if len(words) <= chunk_size:
-            chunks.append(section.strip())
-        else:
-            for i in range(0, len(words), chunk_size - overlap):
+        if n > chunk_size:
+            # Large section: flush any pending merge, then window-split this section.
+            flush()
+            for i in range(0, n, chunk_size - overlap):
                 window = words[i:i + chunk_size]
                 if window:
                     chunks.append(' '.join(window))
+            continue
+        # Small/medium section: start a new chunk if adding this would overflow.
+        if buf_texts and buf_words + n > chunk_size:
+            flush()
+        buf_texts.append(section.strip())
+        buf_words += n
+    flush()
     return [c for c in chunks if c.strip()]
 
 def load_documents(kb_path: str) -> List[Dict]:
