@@ -18,11 +18,12 @@ If you're talking to this AI right now, you're using this system. The repo conta
 |---|---|---|
 | Frontend | React + Vite + Tailwind CSS | Browser |
 | Edge | Nginx + FastAPI (api-proxy.py) | cwetzel.com VPS |
-| LLM | vLLM + Qwen2.5-Coder 14B Instruct | T5810 home server |
-| Vector DB | Qdrant | T5810 home server |
-| Embeddings | all-MiniLM-L6-v2 | T5810 home server (CPU) |
+| LLM | vLLM + Qwen2.5-Coder 14B Instruct | T5810 home server (2× A4500) |
+| Vector DB | Qdrant (hybrid: dense + BM25 sparse) | T5810 home server |
+| Embeddings | BAAI/bge-base-en-v1.5 (768-d) | T5810 home server (CPU) |
 | Reranker | bge-reranker-base (cross-encoder) | T5810 home server (CPU) |
-| Tunnel | SSH reverse forward | VPS ↔ T5810 |
+| Faithfulness verifier | Qwen2.5-7B-Instruct (Ollama, CPU) | asrock B550 home server |
+| Tunnel | SSH reverse forward (VPS → T5810 → asrock) | VPS ↔ home LAN |
 
 ---
 
@@ -30,14 +31,16 @@ If you're talking to this AI right now, you're using this system. The repo conta
 
 Every chat message goes through a Retrieval-Augmented Generation pipeline:
 
-1. **Embed query:** The user's message is embedded using `all-MiniLM-L6-v2` (384 dims, CPU)
-2. **Vector search:** Qdrant searches the `documents` collection using cosine similarity, returning the top-15 candidate chunks
-3. **Rerank:** A `bge-reranker-base` cross-encoder (CPU, T5810) re-scores all 15 candidates against the query and keeps the top 5. Bi-encoder cosine is fast but imprecise — it surfaces candidates; the cross-encoder picks the genuinely most relevant. Runs on the T5810's idle CPU/RAM, no GPU contention with vLLM.
-4. **Inject context:** The reranked top-5 docs are injected into the LLM system prompt
-5. **Stream response:** vLLM streams the response token-by-token over WebSocket to the browser
-6. **Extract follow-ups:** The model appends `FOLLOWUPS:[...]` at the end; the frontend parses and strips it, showing suggestion chips
+1. **Alias-expand query:** The user's message is widened with a curated synonym/alias map (e.g. "LLM" ↔ "large language model", project codenames) so retrieval recall doesn't depend on exact wording.
+2. **Embed query:** The expanded query is embedded using `BAAI/bge-base-en-v1.5` (768 dims, CPU).
+3. **Hybrid search:** Qdrant runs a hybrid query against the `documents` collection — a dense (cosine) vector search **and** a BM25 sparse-term search — fused with Reciprocal Rank Fusion, returning the top-15 candidate chunks. Dense catches semantic matches; BM25 catches exact/rare terms (names, codenames, error strings) that dense embeddings miss.
+4. **Rerank:** A `bge-reranker-base` cross-encoder (CPU, T5810) re-scores all 15 candidates against the original query and keeps the top 5 (capped at one chunk per source document for diversity). Runs on the T5810's idle CPU/RAM, no GPU contention with vLLM.
+5. **Inject context:** The reranked top-5 chunks are fit to a token budget and injected into the LLM system prompt.
+6. **Stream response:** vLLM streams the response token-by-token over WebSocket to the browser.
+7. **Extract follow-ups:** The model appends `FOLLOWUPS:[...]` at the end; the frontend parses and strips it, showing suggestion chips.
+8. **Verify (out-of-band):** After the answer is delivered, the proxy fire-and-forgets the `(query, answer, chunks)` to a faithfulness verifier on a separate box (asrock B550), which scores whether each claim is supported by the retrieved chunks. This never blocks or alters the answer — it's continuous drift monitoring (see "Verification & Validation" below).
 
-This means the LLM is grounded in actual documented facts (my real projects, case studies, posts) rather than hallucinating biographical details.
+This means the LLM is grounded in actual documented facts (my real projects, case studies, posts) rather than hallucinating biographical details — and the grounding is continuously *measured*, not just hoped for.
 
 ---
 
@@ -50,7 +53,7 @@ The knowledge base (indexed into Qdrant) includes:
 - Infrastructure write-ups: T5810 homelab, this AI system
 - Project docs: pxx (aider orchestrator), gentoo-machines (fleet config)
 
-Documents are chunked at 400 words with 50-word overlap, embedded, and stored as vectors.
+Documents are chunked structure-aware — split on markdown section boundaries (merging small sections, splitting long ones to ~400 words) so each chunk is a coherent semantic unit — then embedded (dense) and BM25-encoded (sparse) and stored as vectors.
 
 ---
 
@@ -147,22 +150,45 @@ Comparable cloud GPU inference (2× A4500 equivalent) would cost $3-5/hour. At m
 
 ## Ports & Services
 
-All services on the T5810 bind to localhost only. The public VPS reaches them through an SSH reverse tunnel.
+Home-server services bind to the LAN/localhost only. The public VPS reaches them through a single SSH reverse tunnel that terminates on the T5810; the T5810 in turn reaches the asrock box over the home LAN.
 
-| Service | Port | Role | Fallback if unavailable |
-|---|---|---|---|
-| FastAPI proxy | 8000 (VPS) | WebSocket/API entry, RAG orchestration | None — chat stops |
-| vLLM | 8004 | LLM inference | None — chat stops |
-| Qdrant | 6333 | Vector search | None — chat stops |
-| Embedding service | 8005 | `all-MiniLM-L6-v2` query/document embeddings | None — chat stops |
-| bge-reranker-base | 8006 | Cross-encoder reranking of top-15 cosine candidates | Cosine top-5, capped at one chunk per source doc |
-| SSH tunnel | 8004, 6333, 8005 forwarded | Secure VPS↔T5810 link | None — services unreachable from public internet |
+| Service | Port | Host | Role | Fallback if unavailable |
+|---|---|---|---|---|
+| FastAPI proxy | 8000 | VPS | WebSocket/API entry, RAG orchestration | None — chat stops |
+| vLLM | 8004 | T5810 | LLM inference | None — chat stops |
+| Qdrant | 6333 | T5810 | Hybrid vector + sparse search | None — chat stops |
+| Embedding service | 8005 | T5810 | `bge-base-en-v1.5` query/document embeddings | None — chat stops |
+| bge-reranker-base | 8006 | T5810 | Cross-encoder reranking of the top-15 candidates | Fused order, one chunk per source doc |
+| Faithfulness verifier | 8007 | asrock B550 | Out-of-band claim-level faithfulness scoring | Chat unaffected — verdicts pause (fail-open) |
+| SSH tunnel | 8004/6333/8005/8006/8007 forwarded | VPS → T5810 (→ asrock) | Secure VPS↔home link | None — services unreachable from public internet |
 
 ---
 
 ## Reranker Fallback Behavior
 
-The proxy always retrieves 15 candidate chunks from Qdrant using cosine similarity. It then asks the CPU reranker (port 8006) to re-score all 15 and return the best ones. If the reranker is unreachable, returns a non-200 status, or times out, the proxy fails open: it uses the original cosine-similarity order, applies the per-source-doc cap (max one chunk per document), and returns the top 5. Chat continues with slightly lower relevance precision.
+The proxy always retrieves 15 candidate chunks from Qdrant (hybrid dense + BM25). It then asks the CPU reranker (port 8006) to re-score all 15 and return the best ones. If the reranker is unreachable, returns a non-200 status, or times out, the proxy fails open: it uses the original fused order, applies the per-source-doc cap (max one chunk per document), and returns the top 5. Chat continues with slightly lower relevance precision.
+
+---
+
+## Verification & Validation
+
+The system spans two home servers, reached over a single SSH tunnel. Here is how a question travels and how it gets checked:
+
+```
+Browser ──HTTPS/WSS──> cwetzel.com VPS (FastAPI proxy)
+                          │  RAG: alias-expand → embed → Qdrant hybrid → rerank → vLLM stream
+                          │  (all home services reached at 127.0.0.1 via the SSH tunnel)
+                          ▼
+                  ── SSH reverse tunnel ──> T5810 (ai.cwetzel.com)
+                          ├─ vLLM 8004, Qdrant 6333, embed 8005, rerank 8006  (on the T5810)
+                          └─ tunnel also forwards :8007 ──LAN──> asrock B550 (verifier)
+```
+
+**How the VPS reaches two home boxes through one tunnel.** The tunnel is a single SSH connection from the VPS that terminates on the T5810. Each forwarded port resolves its target *from the T5810's side*: ports 8004/6333/8005/8006 point at `127.0.0.1` (services on the T5810 itself), while port 8007 points at the asrock box's LAN address. So the T5810 doubles as the jump host — the VPS never needs a separate link to asrock; it rides the same tunnel, and the T5810 routes the verifier traffic across the home LAN. Nothing on either home server is exposed to the public internet.
+
+**What the verifier does.** After every answer is delivered, the proxy fire-and-forgets `(question, answer, retrieved chunks)` to the verifier on asrock. A separate judge model (Qwen2.5-7B on CPU — deliberately a *different* model than the 14B that wrote the answer, to avoid self-grading bias) decides, per claim, whether it is **supported**, **unsupported**, or **contradicted** by the retrieved chunks, and records a faithfulness score. This is out-of-band: it never blocks, delays, or rewrites the answer, and if asrock is down the chat is completely unaffected (the verdict simply isn't recorded). It turns "the answer is grounded" from a hope into a continuously measured signal, and flags drift for review.
+
+**Offline evaluation.** Separately from the live verifier, a graded eval harness (`scripts/eval_graded.py`) runs a ~30-question human-authored golden set through the live pipeline and scores grounding/faithfulness, with ship thresholds — the regression gate used before changes go live. A lightweight self-test also runs as a deploy gate and an hourly canary.
 
 ---
 
@@ -182,13 +208,11 @@ At moderate usage, the owned hardware breaks even in roughly 1–2 months versus
 
 ## Known Limitations & Honest Weaknesses
 
-1. **No source citations in the UI.** Retrieved documents ground the answer, but the visitor cannot see which chunks were used. This makes it harder to verify claims.
-2. **No live eval pipeline.** There is no automated test set that runs after prompt or KB changes. Quality is checked manually by asking test questions.
-3. **Single point of failure.** The T5810 is one machine. A power outage, hardware failure, or ISP issue takes the chat offline until it recovers.
-4. **No dynamic knowledge.** The KB is static Markdown files. Recent work after the last index run is not reflected until `scripts/index_with_embeddings.py` is re-run.
-5. **Reranker runs on CPU.** It adds ~2–3 seconds of latency per query compared to a GPU reranker, but keeps GPU memory free for vLLM.
-6. **Small embedding model.** `all-MiniLM-L6-v2` is fast but imprecise; it needs the reranker to place the right chunks in the final top 5.
-7. **Context window limits.** Long conversations are compacted by dropping oldest turns, so multi-turn threads can lose earlier context.
-8. **Model can still hallucinate.** The grounding rules reduce but do not eliminate hallucination, especially if the retrieved chunks are borderline-relevant.
+1. **Source citations not surfaced in the UI.** The backend tracks which chunks grounded each answer (and sends them over the WebSocket), but the visitor-facing UI doesn't yet render them prominently.
+2. **The chat's compute is a single point of failure.** The T5810 is one machine; a power, hardware, or ISP issue takes the chat offline until it recovers. (The asrock verifier is *not* a SPOF — it fails open, so the chat is unaffected if it's down.)
+3. **No dynamic knowledge.** The KB is static Markdown. Recent work after the last index run isn't reflected until `scripts/index_with_embeddings.py` is re-run.
+4. **Reranker and verifier run on CPU.** Each adds latency versus a GPU, but keeps GPU memory free for vLLM (and keeps the judge on a separate box entirely).
+5. **Context window limits.** Long conversations are compacted by dropping oldest turns, so multi-turn threads can lose earlier context.
+6. **The model can still hallucinate.** Grounding rules + hybrid retrieval reduce but don't eliminate it, especially with borderline-relevant chunks. The out-of-band verifier doesn't *prevent* a bad answer reaching the user once — it catches it afterward and flags it for the next iteration.
 
-Planned fixes: source citations in the UI, an eval test suite, and automated re-indexing on KB changes.
+Addressed since earlier versions: upgraded embeddings (MiniLM-384 → bge-base-768), added hybrid dense+BM25 retrieval, a graded eval pipeline + golden set, a deterministic prompt-extraction guardrail, and a live faithfulness verifier. Still planned: UI source citations and automated re-indexing on KB changes.
