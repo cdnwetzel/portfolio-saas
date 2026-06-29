@@ -16,7 +16,7 @@ The prompt was rewritten to enforce first-person speech from the assistant's per
 
 ## Second failure: it hallucinated the model
 
-When asked how the system worked, the model said inference was handled by "a variant of GPT." This was wrong on every level: the model is Qwen, served by vLLM, on local GPUs. The root cause was that the KB had the hardware details but not a clear model/runtime card. I added an explicit section to `knowledge_base/infrastructure/ai_portfolio_system.md` listing the model, creator, inference engine, ports, and fallback behavior. The prompt now requires inline `[source: filename]` citations for factual claims.
+When asked how the system worked, the model said inference was handled by "a variant of GPT." This was wrong on every level: the model is Qwen, served by vLLM, on local GPUs. The root cause was that the KB had the hardware details but not a clear model/runtime card. I added an explicit section to `knowledge_base/infrastructure/ai_portfolio_system.md` listing the model, creator, inference engine, ports, and fallback behavior.
 
 ## Third failure: no source citations
 

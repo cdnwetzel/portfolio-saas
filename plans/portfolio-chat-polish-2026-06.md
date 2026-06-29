@@ -1,5 +1,13 @@
 # Portfolio Chat Polish Plan — June 2026
 
+> **Status (2026-06-28): historical — implemented, with later course corrections.** Most of
+> this shipped (identity/first-person/RAG-only/anti-jailbreak/anti-speculation prompt rules,
+> grounding, Sources UI). Two items changed after the fact: the inline `[source: filename]`
+> citation rule was **removed** in favor of a deterministic UI Sources panel (the model obeyed
+> inline tags inconsistently), and grounding/attribution were hardened via per-case-study
+> "Role:" lines + an anti-embellishment rule. See `plans/rag-improvements.md` and
+> `plans/verifier-faithfulness-layer.md` for the current state.
+
 ## Goal
 Make the portfolio AI assistant grounded, citable, trustworthy, and professionally presentable while keeping all inference local (Qwen 14B on vLLM / T5810).
 
