@@ -35,6 +35,7 @@ IT infrastructure professional with 26 years managing enterprise systems at scal
 - **Incident Response:** Breach response, forensics, remediation, lessons learned
 
 ### Automation & Scripting
+- **Favorite languages:** Python and SQL — the two I reach for most and enjoy working in.
 - **PowerShell:** Complex infrastructure automation, system administration tasks
 - **SQL:** Query optimization, report generation, data analysis
 - **Python:** Automation pipelines, document processing, script development
