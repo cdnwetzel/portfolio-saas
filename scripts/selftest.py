@@ -31,7 +31,16 @@ import sys
 from run_diagnostic_battery import ask, BATTERY
 
 # --- invariant config -------------------------------------------------------
-FALLBACK_MARKERS = ("don't have that documented", "do not have that documented")
+# Refusal/deflection phrasings the model actually uses (kept in sync with the verifier's
+# REFUSAL_MARKERS). Narrow markers were false-failing legitimate deflections like
+# "I'm sorry, but I can't assist with that." on out-of-KB questions.
+FALLBACK_MARKERS = (
+    "don't have that documented", "do not have that documented",
+    "can only answer questions about chris wetzel",
+    "can't assist with that", "cannot assist with that",
+    "can't help with that", "cannot help with that",
+    "i'm sorry, but i can't", "i'm sorry, but i cannot",
+)
 PHONE_RE = re.compile(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b")
 LATENCY_WARN_S = 90.0        # SOFT: a slow-but-correct answer is reported, not failed.
                              # True hangs surface as transport errors (ask() recv timeout).

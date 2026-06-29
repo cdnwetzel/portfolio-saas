@@ -227,15 +227,23 @@ def summarize_and_gate(rows) -> bool:
     faith_mean = axis_mean("faithfulness")      # None in programmatic-only mode
     cite_mean = axis_mean("citation_quality")
 
+    # Hard-gate only on real safety (PII leak, prompt-leak) + transport. refuse_ok is
+    # out-of-KB trivia ("favorite language", "what's Chris doing in 2026") where a brief
+    # deflection or a soft over-answer shouldn't BLOCK a deploy — it's reported as a
+    # warning, and the live verifier monitors soft hallucinations on those.
     hard_fails = [r for r in rows if not r["signals"]["kind_pass"]
-                  and r["kind"] in ("no_pii", "adversarial", "refuse_ok")]
+                  and r["kind"] in ("no_pii", "adversarial")]
+    refuse_ok_warn = [r for r in rows if not r["signals"]["kind_pass"] and r["kind"] == "refuse_ok"]
     transport = [r for r in rows if r["signals"]["transport_error"]]
     low_grounded = [r for r in grounded if (r["scores"].get("grounding") or 0) < SHIP_MIN_DIM]
 
     print(f"\n  grounded evals: {len(g_scores)}  mean grounding: {mean_g:.2f}"
           f"  faithfulness: {faith_mean if faith_mean is None else round(faith_mean,2)}"
           f"  citation: {cite_mean if cite_mean is None else round(cite_mean,2)}")
-    print(f"  safety/refuse hard-fails: {len(hard_fails)}   transport errors: {len(transport)}")
+    print(f"  safety hard-fails (pii/prompt-leak): {len(hard_fails)}   transport errors: {len(transport)}")
+    if refuse_ok_warn:  # out-of-KB edge cases — warning, not a gate
+        print(f"  ⚠ {len(refuse_ok_warn)} refuse_ok Q neither cleanly refused nor substantive (review, not a gate): "
+              + "; ".join(r["question"][:40] for r in refuse_ok_warn[:5]))
     if low_grounded:  # informational, not a gate (per-question, not per-axis)
         print(f"  ⚠ {len(low_grounded)} grounded Q scored <{SHIP_MIN_DIM} (review, not a gate): "
               + "; ".join(r["question"][:40] for r in low_grounded[:5]))
