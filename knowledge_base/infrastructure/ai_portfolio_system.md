@@ -1,5 +1,11 @@
 # AI Portfolio Chat System — Architecture & Design
 
+## At a Glance
+
+Portfolio AI (dev.cwetzel.com) is a self-hosted, full-stack Retrieval-Augmented Generation platform serving a personalized digital twin of my work. It runs on a secure, low-latency hybrid-cloud topology: **Apache** on an edge VPS terminates SSL/WSS and proxies traffic through an encrypted **SSH reverse tunnel** to a bare-metal **Gentoo Linux** home server — zero cloud compute cost. Inference is served by **vLLM** running **Qwen2.5-Coder 14B Instruct** with **tensor parallelism across an NVLink-bridged dual RTX A4500** GPU array. A custom **FastAPI** backend manages a 24K-character sliding-window context history, streams tokens over **WebSocket**, and grounds every response in a **Qdrant** vector database — **bge-base-en-v1.5 (768-d) cosine retrieval, reranked by a bge-reranker-base CPU cross-encoder** — with an out-of-band faithfulness verifier independently scoring each answer's grounding.
+
+---
+
 ## What This Is
 
 The AI chat at dev.cwetzel.com is a full-stack AI inference system built on personal hardware. It's not a wrapper around OpenAI or a cloud GPU service — it runs on a Dell Precision T5810 in my home office on two RTX A4500 GPUs with a custom vLLM deployment.
