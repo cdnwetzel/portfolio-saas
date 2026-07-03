@@ -19,10 +19,17 @@ respawn_period=30
 command_user="chris:chris"
 
 # Config (override in /etc/conf.d/verifier-service):
+#   VERIFIER_BIND=10.0.1.115   # THIS box's LAN IP — bind here (not 0.0.0.0) so the
+#                              # T5810 tunnel reaches 8007 without exposing it LAN-wide.
 #   JUDGE_BACKEND=ollama
 #   JUDGE_MODEL=qwen2.5:7b-instruct-q4_K_M
 #   THRESHOLD=0.8
 #   DB_PATH=/home/chris/verifier/verdicts.db
+
+# Bind address for uvicorn. Localhost-only by default; conf.d overrides to the LAN IP on
+# the asrock box. Exported so supervise-daemon passes it into verifier.py's environment.
+: "${VERIFIER_BIND:=127.0.0.1}"
+export VERIFIER_BIND
 
 depend() {
     need localmount net

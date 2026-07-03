@@ -1,0 +1,27 @@
+[Unit]
+Description=Portfolio AI deep health probe (proxy + tunneled vLLM/Qdrant/embed/rerank/verifier + E2E)
+After=network.target api-proxy.service portfolio-ai-tunnel.service
+# If the probe process itself crashes (a bug, an OOM) before it can send its own ntfy,
+# this fires the alert oneshot so the failure-of-the-monitor never goes silent.
+OnFailure=portfolio-health-alert.service
+
+[Service]
+Type=oneshot
+# Config (NOT in the repo) — create on the VPS once:
+#   NTFY_URL=https://ntfy.sh/<your-private-topic>
+#   HEALTHCHECKS_URL=https://hc-ping.com/<uuid>     # optional dead-man's switch
+# See cloud/setup-health-monitor.sh.
+EnvironmentFile=/etc/default/portfolio-health
+WorkingDirectory=/opt/portfolio-health
+# --no-smoke: the 5-min probe uses only the CHEAP per-service checks (incl. the Qdrant
+# points_count probe that catches the 2026-06-14 outage class directly). The heavy E2E
+# WS query — 4 real LLM generations — would otherwise run every 5 min and keep the GPU
+# busy self-testing ~half the time. E2E coverage instead comes from the daily heartbeat
+# (portfolio-health-heartbeat.service) and the 30-min T5810 canary (public path).
+ExecStart=/usr/bin/python3 /opt/portfolio-health/health_aggregate.py --no-smoke
+# A CRITICAL service makes the script exit 1; that is the normal "something is down"
+# path (it already paged via ntfy), NOT a monitor failure — so don't treat exit 1 as
+# an OnFailure trigger. Only a real crash (signal / unhandled) should fire the alert.
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal

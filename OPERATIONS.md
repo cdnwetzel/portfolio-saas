@@ -14,16 +14,23 @@
 |---------|------|--------|-----------|---------|
 | api-proxy | 8000 | ✅ Running | ✅ Enabled | Always |
 | apache2 | 80/443 | ✅ Running | ✅ Enabled | On-failure |
-| portfolio-ai-tunnel | 8001/8004/8005/8006/6333 | ✅ Running | ✅ Enabled | Always |
+| portfolio-ai-tunnel | 8001/8004/8005/8006/6333/8007 | ✅ Running | ✅ Enabled | Always |
+| portfolio-health.timer | — | ✅ Running | ✅ Enabled | Timer (5 min) |
 
 ### Services (T5810)
 
 | Service | Port | Status | Usage |
 |---------|------|--------|-------|
 | pscode vLLM | 8004 | ✅ Running | BF16, 16K context, 18GB/GPU |
-| Qdrant | 6333 | ✅ Running | Vector DB |
-| embed-service | 8005 | ✅ Running | all-MiniLM-L6-v2 (CPU) |
+| Qdrant | 6333 | ✅ Running | Vector DB — `home/qdrant/qdrant.openrc` (IaC) |
+| embed-service | 8005 | ✅ Running | BAAI/bge-base-en-v1.5, 768-d (CPU) |
 | rerank-service | 8006 | ✅ Running | bge-reranker-base (CPU) |
+
+### Services (asrock B550 — verifier node)
+
+| Service | Port | Status | Usage |
+|---------|------|--------|-------|
+| verifier-service | 8007 | ✅ Running | Out-of-band faithfulness judge (fail-open). Binds `VERIFIER_BIND` (LAN IP, not 0.0.0.0); reached via the tunnel's `-L 8007`. |
 
 ---
 
@@ -67,6 +74,61 @@ ssh root@cwetzel.com "journalctl -u api-proxy -f"
 
 # Real-time Apache logs
 ssh root@cwetzel.com "tail -f /var/log/apache2/access.log"
+```
+
+---
+
+## Automated Health Monitoring & Alerting
+
+**Motivation:** the 2026-06-14 outage — Qdrant crash-looped and latched off, so every query
+answered *"I don't have that documented in my knowledge base"* — went undetected because nothing
+paged a human and the per-service `/health` endpoints all return a trivial `{"status":"ok"}` that
+can't see a Qdrant serving 0 points. This layer fixes that.
+
+**Design:** monitor + **alert only** (no auto-restart of stateful services — a blind respawn loop
+is what hid the outage). One deep VPS-side aggregator covers every failure mode reachable through
+the tunnel; an external dead-man's switch covers the VPS itself dying; a home-side canary is the
+second, public-path vantage.
+
+### Components
+
+| Component | Where | Schedule | What it catches |
+|-----------|-------|----------|-----------------|
+| `scripts/health_aggregate.py` (`portfolio-health.timer`) | VPS | every 5 min | cheap probes: proxy, vLLM (`/v1/models`), **Qdrant points_count**, embed, rerank, verifier (`--no-smoke` — no LLM load) |
+| `portfolio-health-heartbeat.timer` | VPS | daily 12:00 UTC | full run **incl. E2E WS query**; sends one "all green" ntfy/day so silence never means "monitor dead"; feeds healthchecks.io |
+| `portfolio-health-alert.service` | VPS | `OnFailure=` | monitor-of-monitor: pages if the probe process itself crashes |
+| healthchecks.io ping | external | on every green run | dead-man's switch — alerts if the VPS/monitor stops pinging |
+| `scripts/selftest-canary.sh` (cron) | T5810 | every 30 min | public Apache→proxy→tunnel path (SSL/DNS) from the home network |
+
+**Alert channel:** ntfy.sh push to a private topic. Config (not in the repo):
+`/etc/default/portfolio-health` on the VPS (`NTFY_URL`, `HEALTHCHECKS_URL`) and
+`/etc/portfolio-canary.env` on the T5810 (`NTFY_URL`). Alerts fire **only on state transitions**
+(healthy→down pages; down→healthy sends "recovered") — a sustained outage is not re-paged every cycle.
+
+### Severity map (what pages vs. what doesn't)
+
+| Signal | Severity | Pages? |
+|--------|----------|--------|
+| tunnel down / proxy / vLLM / embed down | CRITICAL | yes |
+| **Qdrant up but points_count == 0** (the outage signature) | CRITICAL | yes |
+| E2E smoke: a grounded question returns the fallback | CRITICAL | yes |
+| rerank down (fails open to cosine order) | DEGRADED | heartbeat only |
+| verifier / Ollama down (fail-open, chat unaffected) | INFO | no |
+
+### Provisioning / commands
+
+```bash
+# Install/refresh the VPS monitor (deploys scripts + systemd units, seeds config):
+./cloud/setup-health-monitor.sh
+
+# One-off manual probe (prints per-service status; exit 1 if any CRITICAL):
+ssh root@cwetzel.com "cd /opt/portfolio-health && python3 health_aggregate.py"
+
+# Monitor logs:
+ssh root@cwetzel.com "journalctl -u portfolio-health.service -n 30 --no-pager"
+
+# Install the durable Qdrant unit on the T5810 (see runbook below):
+./home/setup-qdrant.sh
 ```
 
 ---
@@ -149,6 +211,37 @@ ssh root@cwetzel.com "curl -s -m 5 http://ai.cwetzel.com:8004/v1/models | head -
 ssh root@cwetzel.com "journalctl -u portfolio-ai-tunnel -n 5 --no-pager"
 ```
 
+### Every query answers "I don't have that documented" (Qdrant latched off — 2026-06-14 outage class)
+
+Signature: the site loads and streams, but **every** answer is the fallback refusal. Root cause is
+almost always retrieval returning empty — usually Qdrant down or serving 0 points.
+
+```bash
+# 1. Confirm which stage is broken (from the VPS, through the tunnel):
+ssh root@cwetzel.com "cd /opt/portfolio-health && python3 health_aggregate.py"
+#    Look for: [CRITICAL] Qdrant unreachable  OR  points_count=0
+
+# 2. On the T5810, inspect + recover Qdrant:
+ssh root@ai.cwetzel.com "tail -n 30 /var/log/qdrant.log"     # look for PermissionDenied on ./snapshots
+ssh root@ai.cwetzel.com "rc-service qdrant status"
+ssh root@ai.cwetzel.com "rc-service qdrant zap && rc-service qdrant start"   # zap clears a crashed/latched state
+
+# 3. Verify it came back green with points:
+ssh root@ai.cwetzel.com "curl -s http://127.0.0.1:6333/collections/documents | head -c 300"
+#    Expect: status:green, points_count > 0
+
+# 4. If it crash-loops on a PermissionDenied for ./snapshots/tmp, the OLD init bug is present.
+#    Install the durable unit (correct CWD + logging, clears the stale root-owned /snapshots):
+./home/setup-qdrant.sh
+
+# 5. If Qdrant is green but points_count is 0, the collection is empty — rebuild the index:
+./scripts/reindex_kb.sh
+```
+
+The durable fix (`home/qdrant/qdrant.openrc`) sets the daemon's CWD to `/home/chris/qdrant-data`
+so its relative `./snapshots` cleanup can never again hit the root-owned `/snapshots`, and uses
+`output_log`/`error_log` instead of a shell redirect passed as bogus argv.
+
 ### High latency or timeouts
 
 ```bash
@@ -192,7 +285,7 @@ ssh root@cwetzel.com "ping -c 1 98.110.86.95"
 
 ### Production Checklist (Later)
 
-- [ ] Set up monitoring/alerting
+- [x] Set up monitoring/alerting (deep health aggregator + ntfy + healthchecks.io dead-man's switch; see "Automated Health Monitoring & Alerting")
 - [ ] Configure log rotation
 - [ ] Set up automated backups
 - [ ] Prepare runbooks for common incidents
@@ -212,4 +305,4 @@ ssh root@cwetzel.com "ping -c 1 98.110.86.95"
 
 For infrastructure issues, check logs above. For model issues (vLLM), contact whoever manages pscode (T5810).
 
-**Last Updated:** 2026-06-06
+**Last Updated:** 2026-07-02
