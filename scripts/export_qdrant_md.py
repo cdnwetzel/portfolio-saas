@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-Export the indexed RAG content from Qdrant to markdown files — the *actual* retrieval
+Export the indexed RAG content from Qdrant to text files — the *actual* retrieval
 source of truth (post-chunking), which can differ from the repo `knowledge_base/*.md`
 if a reindex is pending. Useful for auditing what the chat can actually ground on.
 
 Scrolls the whole `documents` collection, groups chunks back into their source docs
-(by `doc_id`, ordered by `chunk_index`), and writes one .md per document plus an INDEX.md.
+(by `doc_id`, ordered by `chunk_index`), and writes one file per document plus an INDEX.
+Output extension defaults to .txt (override with --ext md); the content is markdown-formatted
+regardless of extension.
 
 Payload schema (from scripts/index_with_embeddings.py):
   doc_id, title, content (chunk text), source, chunk_index, word_count, impressions
@@ -65,9 +67,11 @@ def main():
     ap.add_argument("--qdrant-url", default=QDRANT_URL)
     ap.add_argument("--collection", default="documents")
     ap.add_argument("--out", default="exports/qdrant_kb")
+    ap.add_argument("--ext", default="txt", help="output file extension (default: txt)")
     ap.add_argument("--merge", action="store_true",
                     help="concatenate chunks into prose instead of separated sections")
     args = ap.parse_args()
+    ext = args.ext.lstrip(".")
 
     # Group payloads by doc_id (fall back to title+source for older points).
     docs = {}
@@ -95,7 +99,7 @@ def main():
     for d in docs.values():
         d["chunks"].sort(key=lambda c: c[0])          # order by chunk_index
         words = sum(c[2] for c in d["chunks"])
-        fname = f"{slug(d['source'])}__{slug(d['title'])}.md"
+        fname = f"{slug(d['source'])}__{slug(d['title'])}.{ext}"
 
         lines = [
             "---",
@@ -131,11 +135,12 @@ def main():
            "|--------|----------|-------:|------:|------|"]
     for source, title, nchunks, words, fname in index_rows:
         idx.append(f"| {source} | {title} | {nchunks} | {words:,} | [{fname}]({fname}) |")
-    with open(os.path.join(args.out, "INDEX.md"), "w", encoding="utf-8") as f:
+    index_name = f"INDEX.{ext}"
+    with open(os.path.join(args.out, index_name), "w", encoding="utf-8") as f:
         f.write("\n".join(idx) + "\n")
 
     print(f"Exported {len(docs)} documents / {total_chunks} chunks → {args.out}/")
-    print(f"  see {args.out}/INDEX.md")
+    print(f"  see {args.out}/{index_name}")
 
 
 if __name__ == "__main__":
