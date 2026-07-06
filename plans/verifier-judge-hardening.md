@@ -70,17 +70,40 @@ swap now forces a flag even in an otherwise high-scoring answer.
   change; `paraphrase_still_supported` must stay green. This cannot be run offline (needs the
   7B judge); it runs on the asrock after deploy.
 
-## Deferred, on purpose (separate tasks)
-- **Extraction widening** — isolate compound claims like "both the NVIDIA and AMD GPUs" so
-  they get judged. Noisy; do AFTER a measured baseline on the tighter rubric.
-  **MEASURED 2026-07-05 (why it's still deferred):** shipped an atomization instruction in
-  `build_judge_messages` alongside the rubric and ran it on the live 7B judge. Result: it
-  caught the compound case BUT produced two false positives on faithful answers
-  (`faithful_fully_covered` 0.75, `true_crossmachine_fact_with_evidence` 0.5) — the exact
-  false-unsupported inversion. Reverted. #6 rubric alone is 8/8 clean on fixtures. Extraction
-  needs a decomposition that splits conjunctions WITHOUT over-splitting faithful multi-fact
-  sentences (or a stronger judge). Acceptance test: `compound_claim_split_one_false` must
-  flag while `faithful_fully_covered` and `true_crossmachine_fact_with_evidence` stay clean.
+## Extraction widening — RESOLVED 2026-07-06: accept-the-gap (no judge change)
+Isolating compound claims like "both the NVIDIA and AMD GPUs" so a false half can't hide
+behind a true one. Investigated to a close; the shipped #6 judge is retained unchanged.
+
+**What the data showed (four deterministic variants on the live 7B/CPU judge, temp 0):**
+- v0 = shipped #6-only rubric: **9/9 fixtures**, including `compound_claim_split_one_false`
+  flagged and `paraphrase_still_supported` clean.
+- v1 strict decomposition instruction: paraphrase FLIPS to unsupported (0.0) — 8/9.
+- v2 strict + broad leniency: paraphrase still fails AND `role_swap_cpu_as_gpu` leaks
+  through — 7/9.
+- v3 narrowed (conjunction-only) decomposition: paraphrase fails, role_swap AND compound
+  both leak — 6/9.
+The moment ANY decomposition text enters the prompt, this 7B judge stops honoring the
+SSH-tunnel paraphrase (`cloud server reaches` ≈ `VPS talks to`, SSH tunnel ≈ "encrypted"
+tunnel) and marks it unsupported. On a single-prompt 7B, compound-recall and
+paraphrase-precision are in direct tension and cannot both be held. With #8 live, a
+paraphrase false positive paints an amber "flagged" badge on a CORRECT answer → trains
+flag-blindness. That trade is worse than the gap it closes.
+
+**Why the gap is narrow anyway:** the compound class that MATTERS — a false half a chunk
+*contradicts*, including the exact live failure "both the NVIDIA and AMD GPUs" — is already
+caught by #6 (`role_swap_cpu_as_gpu` and `compound_claim_split_one_false` both flag on the
+baseline; verified 9/9, twice, deterministic). The only genuinely-uncaught residual is a
+compound whose false half is *chunk-silent* (unsupported, not contradicted) AND is diluted
+below the 0.8 threshold by enough supported facts in the same answer. Narrow, and often a
+plausibly-true add-on rather than a fabrication.
+
+**Shipped:** `compound_claim_split_one_false` added to `fixtures.json` as a permanent
+regression guard (passes on the baseline — locks in that a contradicted compound half gets
+flagged). NO change to `verifier_core.py`; production judge unchanged; `flagged_rate`
+unaffected (0.148 / 263 answers at close). If the narrow residual ever needs closing,
+Approach #2 (two-pass: holistic pass A + conjunction-only pass B) or a stronger judge
+(Approach #3) remain open — see `plans/` #7 close notes; both cost more than the gap is
+worth today.
 - **Enforcement wiring** — the proxy discards the verifier's return value; a flagged verdict
   is a log row nobody reads. Most urgent operationally and architecturally separate. Minimum
   viable: surface "this answer has a flagged claim" as a non-blocking UI footnote. Does not
