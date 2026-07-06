@@ -25,7 +25,7 @@ If you're talking to this AI right now, you're using this system. The repo conta
 | Frontend | React + Vite + Tailwind CSS | Browser |
 | Edge | Apache (SSL/WSS) + FastAPI (api-proxy.py) | cwetzel.com VPS |
 | LLM | vLLM + Qwen2.5-Coder 14B Instruct | T5810 home server (2× A4500) |
-| Vector DB | Qdrant (hybrid: dense + BM25 sparse) | T5810 home server |
+| Vector DB | Qdrant (dense cosine, 768-d) | T5810 home server |
 | Embeddings | BAAI/bge-base-en-v1.5 (768-d) | T5810 home server (CPU) |
 | Reranker | bge-reranker-base (cross-encoder) | T5810 home server (CPU) |
 | Faithfulness verifier | Qwen2.5-7B-Instruct (Ollama, CPU) | asrock B550 home server |
@@ -39,7 +39,7 @@ Every chat message goes through a Retrieval-Augmented Generation pipeline:
 
 1. **Alias-expand query:** The user's message is widened with a curated synonym/alias map (e.g. "LLM" ↔ "large language model", project codenames) so retrieval recall doesn't depend on exact wording.
 2. **Embed query:** The expanded query is embedded using `BAAI/bge-base-en-v1.5` (768 dims, CPU).
-3. **Hybrid search:** Qdrant runs a hybrid query against the `documents` collection — a dense (cosine) vector search **and** a BM25 sparse-term search — fused with Reciprocal Rank Fusion, returning the top-15 candidate chunks. Dense catches semantic matches; BM25 catches exact/rare terms (names, codenames, error strings) that dense embeddings miss.
+3. **Vector search:** Qdrant runs a dense cosine-similarity search against the `documents` collection, returning the top-15 candidate chunks. (A hybrid dense+BM25 path with Reciprocal Rank Fusion was built and A/B-tested, but it *regressed* on this small, well-curated KB versus pure dense — so it's disabled in production, `HYBRID_SEARCH=0`. Dense cosine won.)
 4. **Rerank:** A `bge-reranker-base` cross-encoder (CPU, T5810) re-scores all 15 candidates against the original query and keeps the top 5 (capped at one chunk per source document for diversity). Runs on the T5810's idle CPU/RAM, no GPU contention with vLLM.
 5. **Inject context:** The reranked top-5 chunks are fit to a token budget and injected into the LLM system prompt.
 6. **Stream response:** vLLM streams the response token-by-token over WebSocket to the browser.
@@ -59,7 +59,7 @@ The knowledge base (indexed into Qdrant) includes:
 - Infrastructure write-ups: T5810 homelab, this AI system
 - Project docs: pxx (aider orchestrator), gentoo-machines (fleet config)
 
-Documents are chunked structure-aware — split on markdown section boundaries (merging small sections, splitting long ones to ~400 words) so each chunk is a coherent semantic unit — then embedded (dense) and BM25-encoded (sparse) and stored as vectors.
+Documents are chunked structure-aware — split on markdown section boundaries (merging small sections, splitting long ones to ~400 words) so each chunk is a coherent semantic unit — then embedded (dense, 768-d) and stored as vectors.
 
 ---
 
@@ -162,9 +162,9 @@ Home-server services bind to the LAN/localhost only. The public VPS reaches them
 |---|---|---|---|---|
 | FastAPI proxy | 8000 | VPS | WebSocket/API entry, RAG orchestration | None — chat stops |
 | vLLM | 8004 | T5810 | LLM inference | None — chat stops |
-| Qdrant | 6333 | T5810 | Hybrid vector + sparse search | None — chat stops |
+| Qdrant | 6333 | T5810 | Dense vector (cosine) search | None — chat stops |
 | Embedding service | 8005 | T5810 | `bge-base-en-v1.5` query/document embeddings | None — chat stops |
-| bge-reranker-base | 8006 | T5810 | Cross-encoder reranking of the top-15 candidates | Fused order, one chunk per source doc |
+| bge-reranker-base | 8006 | T5810 | Cross-encoder reranking of the top-15 candidates | Cosine order, one chunk per source doc |
 | Faithfulness verifier | 8007 | asrock B550 | Out-of-band claim-level faithfulness scoring | Chat unaffected — verdicts pause (fail-open) |
 | SSH tunnel | 8004/6333/8005/8006/8007 forwarded | VPS → T5810 (→ asrock) | Secure VPS↔home link | None — services unreachable from public internet |
 
@@ -172,7 +172,7 @@ Home-server services bind to the LAN/localhost only. The public VPS reaches them
 
 ## Reranker Fallback Behavior
 
-The proxy always retrieves 15 candidate chunks from Qdrant (hybrid dense + BM25). It then asks the CPU reranker (port 8006) to re-score all 15 and return the best ones. If the reranker is unreachable, returns a non-200 status, or times out, the proxy fails open: it uses the original fused order, applies the per-source-doc cap (max one chunk per document), and returns the top 5. Chat continues with slightly lower relevance precision.
+The proxy always retrieves 15 candidate chunks from Qdrant (dense cosine). It then asks the CPU reranker (port 8006) to re-score all 15 and return the best ones. If the reranker is unreachable, returns a non-200 status, or times out, the proxy fails open: it uses the original cosine order, applies the per-source-doc cap (max one chunk per document), and returns the top 5. Chat continues with slightly lower relevance precision.
 
 ---
 
@@ -182,7 +182,7 @@ The system spans two home servers, reached over a single SSH tunnel. Here is how
 
 ```
 Browser ──HTTPS/WSS──> cwetzel.com VPS (FastAPI proxy)
-                          │  RAG: alias-expand → embed → Qdrant hybrid → rerank → vLLM stream
+                          │  RAG: alias-expand → embed → Qdrant (dense) → rerank → vLLM stream
                           │  (all home services reached at 127.0.0.1 via the SSH tunnel)
                           ▼
                   ── SSH reverse tunnel ──> T5810 (ai.cwetzel.com)
@@ -219,6 +219,6 @@ At moderate usage, the owned hardware breaks even in roughly 1–2 months versus
 3. **No dynamic knowledge.** The KB is static Markdown. Recent work after the last index run isn't reflected until `scripts/index_with_embeddings.py` is re-run.
 4. **Reranker and verifier run on CPU.** Each adds latency versus a GPU, but keeps GPU memory free for vLLM (and keeps the judge on a separate box entirely).
 5. **Context window limits.** Long conversations are compacted by dropping oldest turns, so multi-turn threads can lose earlier context.
-6. **The model can still hallucinate.** Grounding rules + hybrid retrieval reduce but don't eliminate it, especially with borderline-relevant chunks. The out-of-band verifier doesn't *prevent* a bad answer reaching the user once — it catches it afterward and flags it for the next iteration.
+6. **The model can still hallucinate.** Grounding rules + dense retrieval reduce but don't eliminate it, especially with borderline-relevant chunks. The out-of-band verifier doesn't *prevent* a bad answer reaching the user once — it catches it afterward and flags it for the next iteration.
 
 Addressed since earlier versions: upgraded embeddings (MiniLM-384 → bge-base-768), a graded eval pipeline + golden set, a deterministic prompt-extraction guardrail, a live faithfulness verifier, and a per-answer Sources panel in the UI. Still planned: claim-level (per-sentence) citation and automated re-indexing on KB changes.

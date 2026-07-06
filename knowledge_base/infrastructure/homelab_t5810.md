@@ -16,7 +16,8 @@
 
 ### CPU & Memory
 - **CPU:** Intel Xeon E5-2699v4 — 22 cores / 44 threads, Broadwell-EP
-- **Build performance:** kernel 6.18 at `-j44` in ~5 min; full `@world` (250 packages) in ~90 min; peak RAM during Node.js/V8 compile ~48GB
+- **Memory:** 256 GB DDR4 ECC (total system RAM) — ample headroom to run the CPU embedder, reranker, and Qdrant alongside vLLM with no GPU-VRAM contention
+- **Build performance:** kernel 6.18 at `-j44` in ~5 min; full `@world` (250 packages) in ~90 min; peak RAM during Node.js/V8 compile ~48GB (a workload spike, not the machine's total)
 - **PCIe:** Gen 3 slots for dual-GPU installation
 
 ### Operating System

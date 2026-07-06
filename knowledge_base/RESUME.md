@@ -175,8 +175,8 @@ Designed and tested disaster recovery procedures for mid-size organizations:
 
 **Outcome:** One real incident tested the plan (home office internet outage); failover worked as designed; RTO met target.
 
-### VMware Infrastructure Redesign
-Physical-to-virtual (P2V) migration of 50+ servers across 3 data centers. Consolidation reduced hardware costs by 60%.
+### VMware Infrastructure Redesign (multi-site enterprise consolidation)
+Physical-to-virtual (P2V) migration of 50+ servers across 3 data centers for an enterprise client. Consolidation reduced hardware costs by 60%. (This is a distinct engagement from the smaller graphic-design-studio P2V written up as its own case study — different client, scale, and stack.)
 
 **Architecture Decisions:**
 - Blade server infrastructure (power/cooling efficiency)
