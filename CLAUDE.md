@@ -50,24 +50,33 @@ A deterministic **prompt-extraction guardrail** (`cloud/guardrails.py`) refuses
 (`scripts/eval_graded.py` + `eval/golden_set.yaml`) gates changes. A **hybrid dense+BM25** path
 exists (`HYBRID_SEARCH`) but is **OFF** — an A/B showed it regressed on this small KB (4.41 vs 4.82).
 
-### Known characteristic: the reranker truncates (measured, and it does not matter)
+### Known characteristic: the reranker truncates (real, but not worth fixing — A/B'd)
 
 `bge-reranker-base` caps each (query, chunk) pair at **512 tokens** — an XLM-RoBERTa
-`max_position_embeddings=514` limit, not a tunable. The indexed corpus is 19 docs → 67 chunks
-(62 live Qdrant points), median **668** tokens, so **71.6%** are scored on part of their text.
+`max_position_embeddings=514` limit, not a tunable. The 62 live chunks have a median of **662**
+tokens, so **71%** are scored on part of their text. It affects **ranking only**:
+`rerank_documents()` returns indices and the caller re-reads the full payload (`api-proxy.py:234`),
+so the LLM always receives whole chunks.
 
-It affects **ranking only**: `rerank_documents()` returns indices and the caller re-reads the full
-payload (`api-proxy.py:234`), so the LLM always receives whole chunks.
+The truncation is *not* cosmetic — a head/tail probe (score each over-budget chunk's kept head vs
+its discarded tail against the query) found **23%** of long chunks carry stronger signal in the
+tail that truncation throws away, sometimes starkly (head 0.02 / tail 0.95). So individual-chunk
+ranking is genuinely distorted.
 
-**It costs nothing measurable.** `scripts/compare_retrieval.py` scores the golden set's
-`expect_substrings` through the real pipeline: **19/20** at top-5 and **19/20** at top-8 — raising
-`top_k` recovers zero questions. So a `v2-m3` upgrade would buy latency we now print under every
-answer, for noise. Declined on evidence, as with hybrid BM25. Do not reopen without new data.
+**But fixing it is net-negative, measured by a real A/B.** A parallel `documents_c250` collection
+at `chunk_size=250` cut truncation 71% → 9%, yet through the full embed→search→rerank→cap pipeline
+(`scripts/compare_retrieval.py`) it did *not* improve recall of the golden set's `expect_substrings`:
+20/20 → **19/20** at top-5, because smaller chunks (a) halve the evidence the generator receives
+(11,549 → 6,017 median chars, since `RAG_TOP_K` is a fixed *count* of chunks) and (b) fragment
+multi-part facts across chunks (0 → 3 questions split). The ranking gain is real but the fact still
+reaches the generator via the per-doc cap on the larger chunks, so at the system level it's a wash
+trending slightly worse. A `v2-m3` reranker upgrade (bigger window) would likewise add latency we
+now print under every answer, for a ranking fix that doesn't move answers. **Declined on evidence.**
+Do not reopen without a metric that beats 20/20 end-to-end.
 
-The single retrieval miss was caused by **the per-doc cap**, not truncation: for the AVD question
-the rank-3 chunk contains "AVD" inside its first 498 tokens but was discarded because rank-1 came
-from the same doc. **`RAG_MAX_PER_DOC` is now 2** (was 1), which gives 20/20 at ~zero evidence cost
-(11,549 vs 11,792 median chars). It is env-overridable.
+Separately: the earlier single miss was the **per-doc cap**, not truncation. For the AVD question
+the rank-3 chunk had "AVD" in its first 498 tokens but was discarded because rank-1 came from the
+same doc. **`RAG_MAX_PER_DOC` is now 2** (env-overridable), which gives 20/20 at ~zero evidence cost.
 
 ## Key Features
 
