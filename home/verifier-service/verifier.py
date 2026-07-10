@@ -16,6 +16,8 @@ Env config:
                     (Distinct from setup-verifier.sh's VERIFIER_HOST, which is the SSH target.)
   VERIFIER_PORT     default 8007
   JUDGE_BACKEND     "ollama" (default) | "openai"
+  JUDGE_NUM_CTX     12288 (default). Ollama serves at 4096 unless told otherwise and
+                    truncates silently; only honored on the ollama backend.
   JUDGE_URL         ollama: http://127.0.0.1:11434/api/chat
                     openai: http://127.0.0.1:11434/v1/chat/completions (or any)
   JUDGE_MODEL       default qwen2.5:7b-instruct-q4_K_M
@@ -55,6 +57,9 @@ logger = logging.getLogger("verifier")
 JUDGE_BACKEND = os.getenv("JUDGE_BACKEND", "ollama").lower()
 JUDGE_URL = os.getenv("JUDGE_URL", "http://127.0.0.1:11434/api/chat")
 JUDGE_MODEL = os.getenv("JUDGE_MODEL", "qwen2.5:7b-instruct-q4_K_M")
+# Ollama's own default is 4096 and it truncates silently — see _call_judge(). Real prompts
+# measured up to 10,214 tokens; the model supports 32768.
+JUDGE_NUM_CTX = int(os.getenv("JUDGE_NUM_CTX", "12288"))
 THRESHOLD = float(os.getenv("THRESHOLD", "0.8"))
 SAMPLE_RATE = float(os.getenv("SAMPLE_RATE", "1.0"))
 MAX_INFLIGHT = int(os.getenv("MAX_INFLIGHT", "2"))
@@ -138,7 +143,8 @@ async def lifespan(app: FastAPI):
     global _http
     _init_db()
     _http = httpx.AsyncClient(timeout=60.0)
-    logger.info(f"verifier up: backend={JUDGE_BACKEND} model={JUDGE_MODEL} threshold={THRESHOLD} db={DB_PATH}")
+    logger.info(f"verifier up: backend={JUDGE_BACKEND} model={JUDGE_MODEL} num_ctx={JUDGE_NUM_CTX} "
+                f"threshold={THRESHOLD} db={DB_PATH}")
     yield
     await _http.aclose()
 
@@ -160,10 +166,26 @@ class VerifyRequest(BaseModel):
 
 
 async def _call_judge(messages: list[dict]) -> str:
-    """Call the judge model; return raw text content. Raises on transport error."""
+    """Call the judge model; return raw text content. Raises on transport error.
+
+    num_ctx is set EXPLICITLY. Ollama defaults to a 4096-token window regardless of what the
+    model supports (qwen2.5:7b-instruct reports 32768), and silently truncates anything longer:
+
+        msg="truncating input prompt" limit=4096 prompt=8345 keep=4 new=4095
+
+    The proxy sends VERIFIER_EVIDENCE_LIMIT=15 chunks, so real judge prompts measured 8,916
+    tokens on average (max 10,214) — 54% of every prompt was being discarded. Worse, llama.cpp
+    keeps `keep` leading tokens and drops from the FRONT, and build_judge_messages() puts the
+    system prompt, the QUERY, the ANSWER and the highest-ranked sources there. The judge was
+    grading an answer it could not see against the evidence its reranker liked least.
+
+    12288 covers the largest prompt observed with headroom. The cost is CPU prefill time, which
+    is acceptable: /verify is fire-and-forget, after the answer has already reached the browser.
+    """
     if JUDGE_BACKEND == "ollama":
         payload = {"model": JUDGE_MODEL, "messages": messages, "stream": False,
-                   "format": "json", "options": {"temperature": 0.0}}
+                   "format": "json",
+                   "options": {"temperature": 0.0, "num_ctx": JUDGE_NUM_CTX}}
         resp = await _http.post(JUDGE_URL, json=payload)
         resp.raise_for_status()
         return resp.json().get("message", {}).get("content", "")
