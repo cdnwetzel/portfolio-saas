@@ -14,16 +14,19 @@ A full-stack AI chat built on personal GPU hardware. Not a wrapper around OpenAI
 Browser
   ↓ HTTPS / WSS
 cwetzel.com (Ubuntu VPS)
-  ├─ Nginx  — SSL termination, static React build
+  ├─ Apache — SSL termination, static React build, WSS proxy
   └─ FastAPI api-proxy (port 8000)
        ├─ RAG: embed query → Qdrant search (top-15) → rerank (top-5) → inject context
        └─ Stream: vLLM WebSocket → browser
-            ↓ SSH reverse tunnel
+            ↓ SSH tunnel
 T5810 Home Server (Gentoo Linux)
   ├─ vLLM  — Qwen2.5-Coder 14B, tensor parallel, port 8004
-  ├─ Qdrant — vector DB, 384-dim cosine similarity, port 6333
-  ├─ all-MiniLM-L6-v2 — CPU embeddings, port 8005
+  ├─ Qdrant — vector DB, 768-dim cosine similarity, port 6333
+  ├─ bge-base-en-v1.5 — CPU embeddings (768-d), port 8005
   └─ bge-reranker-base — CPU cross-encoder reranker, port 8006
+            ↓ same tunnel, routed over the home LAN
+asrock B550 (Gentoo Linux)
+  └─ Qwen2.5-7B via Ollama — CPU faithfulness verifier, port 8007
 ```
 
 **Key properties:**
@@ -31,6 +34,8 @@ T5810 Home Server (Gentoo Linux)
 - Streaming via WebSocket — tokens appear as generated, no polling
 - Follow-up suggestion chips — model appends a `FOLLOWUPS:[...]` block; frontend parses and strips it, shows as clickable chips
 - Context management — 4K char per-prompt cap, 24K char sliding window history
+- Out-of-band faithfulness check — a separate 7B judge on a second machine grades whether each answer's claims are grounded in the retrieved context; fails open, so chat is unaffected if it's down
+- Regression-gated — a graded eval over a golden question set (`scripts/eval_graded.py`) runs before deploy, and a deterministic guardrail refuses prompt-extraction attempts before they reach the LLM
 - Zero cloud GPU cost — owned A4500 NVLink pair handles inference
 
 ---
@@ -42,12 +47,14 @@ T5810 Home Server (Gentoo Linux)
 | Frontend | React 18 + Vite + Tailwind CSS |
 | Edge proxy | FastAPI + Uvicorn (Python) |
 | LLM serving | vLLM 0.14.0 |
-| Model | Qwen2.5-Coder 14B Instruct |
-| Vector DB | Qdrant |
-| Embeddings | sentence-transformers / all-MiniLM-L6-v2 |
+| Model | Qwen2.5-Coder 14B Instruct (+ pscode LoRA) |
+| Vector DB | Qdrant (dense cosine, 768-d) |
+| Embeddings | BAAI/bge-base-en-v1.5 (768-d, CPU) |
+| Reranker | BAAI/bge-reranker-base (CPU cross-encoder) |
+| Faithfulness verifier | Qwen2.5-7B via Ollama (CPU, separate host) |
 | Inference hardware | Dell Precision T5810, 2× NVIDIA RTX A4500 (NVLink) |
 | OS | Gentoo Linux (custom kernel, OpenRC) |
-| Networking | SSH reverse tunnel (home → VPS) |
+| Networking | SSH tunnel (VPS → home) |
 
 ---
 
@@ -89,14 +96,11 @@ python scripts/index_with_embeddings.py
 
 ## Deployment
 
-```bash
-# Build and deploy frontend
-cd frontend && npm run build
-rsync -avz --delete dist/ root@cwetzel.com:/var/www/dev.cwetzel.com/
+One script builds the frontend, ships it plus every proxy module, restarts the service, and gates
+on a live self-test — deploying the proxy by hand risks leaving its helper modules stale:
 
-# Deploy proxy
-scp cloud/api-proxy.py root@cwetzel.com:/opt/api-proxy/main.py
-ssh root@cwetzel.com "systemctl restart api-proxy"
+```bash
+./cloud/deploy.sh
 ```
 
 ---

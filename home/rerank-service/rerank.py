@@ -3,14 +3,15 @@
 Reranker service — CPU cross-encoder for RAG precision.
 
 Sits between Qdrant retrieval and the LLM in the RAG pipeline. Qdrant's
-bi-encoder cosine (MiniLM, 384-d) is fast but imprecise — good enough to get
-the right chunk into the top-20, not precise enough to pick the best 3-5.
+bi-encoder cosine (bge-base-en-v1.5, 768-d) is fast but imprecise — good enough
+to get the right chunk into the top-15, not precise enough to pick the best 5.
 This cross-encoder re-scores (query, chunk) pairs with full cross-attention
 and returns the best top_k.
 
 Runs CPU-only (device="cpu") ON PURPOSE: the GPUs are saturated by vLLM, and
-the T5810 has 256GB idle DDR4. Reranking 20 candidates measures ~0.33s on CPU,
-negligible next to generation. Mirrors the embed-service pattern (port 8005).
+the T5810 has 256GB idle DDR4. Reranking the 15 candidates costs ~3s on CPU —
+the dominant term in the retrieval step, still small next to generation.
+Mirrors the embed-service pattern (port 8005).
 """
 from fastapi import FastAPI
 from sentence_transformers import CrossEncoder
