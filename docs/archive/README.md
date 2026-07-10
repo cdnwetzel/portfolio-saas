@@ -40,5 +40,11 @@ of the work.
   (MiniLM embedder, pre-re-chunk KB size, the reverted 32B trial), so it sits here rather than
   reading as current state.
 
-Numbering note: the archived `01-architecture.md` and the current `../02-architecture.md` are
-unrelated documents that happened to collide in an old numbering scheme.
+- `infra/wg-cloud.conf`, `infra/wg-home.conf` — WireGuard peer configs. The design called for a
+  WireGuard overlay between the VPS and the home server; an SSH tunnel shipped instead, and
+  WireGuard was never installed. The key fields were always placeholders. Kept as the record of a
+  transport that lost.
+
+Numbering note: the archived `01-architecture.md` and `../02-architecture.md` are unrelated
+documents that collided in an old numbering scheme. Neither describes the running system —
+`../02-architecture.md` is the Gate-1 design (WireGuard, Llama 2 70B) and says so at the top.

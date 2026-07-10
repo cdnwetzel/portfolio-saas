@@ -21,10 +21,16 @@ User=root
 # Per-machine config lives in /etc/default/portfolio-ai-tunnel (NOT in the repo):
 #   T5810_USER=chris
 #   T5810_HOST=ai.cwetzel.com    # DNS preferred over a raw IP; survives Verizon dynamic-IP rotation
-# Create the file on the VPS once with `T5810_USER` and `T5810_HOST` set,
-# then `systemctl daemon-reload && systemctl restart portfolio-ai-tunnel.service`.
+#   VERIFIER_HOST=<asrock-lan-ip>  # asrock's LAN address, as resolved FROM the T5810
+# Create the file on the VPS once with all three set, then
+# `systemctl daemon-reload && systemctl restart portfolio-ai-tunnel.service`.
+#
+# NOTE: VERIFIER_HOST was previously a literal LAN address in this file. It is parameterized so
+# the public repo carries no internal addressing. The unit currently installed on the VPS still
+# has the literal; adopting this version requires adding VERIFIER_HOST to /etc/default FIRST —
+# an empty value yields `-L 127.0.0.1:8007::8007`, and ssh will refuse to start the tunnel.
 EnvironmentFile=/etc/default/portfolio-ai-tunnel
-ExecStart=/usr/bin/ssh -N -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -L 127.0.0.1:8001:127.0.0.1:8001 -L 127.0.0.1:8004:127.0.0.1:8004 -L 127.0.0.1:8005:127.0.0.1:8005 -L 127.0.0.1:8006:127.0.0.1:8006 -L 127.0.0.1:6333:127.0.0.1:6333 -L 127.0.0.1:8788:127.0.0.1:8788 -L 127.0.0.1:8007:10.0.1.115:8007 ${T5810_USER}@${T5810_HOST}
+ExecStart=/usr/bin/ssh -N -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -L 127.0.0.1:8001:127.0.0.1:8001 -L 127.0.0.1:8004:127.0.0.1:8004 -L 127.0.0.1:8005:127.0.0.1:8005 -L 127.0.0.1:8006:127.0.0.1:8006 -L 127.0.0.1:6333:127.0.0.1:6333 -L 127.0.0.1:8788:127.0.0.1:8788 -L 127.0.0.1:8007:${VERIFIER_HOST}:8007 ${T5810_USER}@${T5810_HOST}
 Restart=always
 RestartSec=10
 StandardOutput=journal

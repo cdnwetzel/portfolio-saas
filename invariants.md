@@ -188,26 +188,27 @@ cat /var/log/backup-restore-test.log | tail -20
 
 ---
 
-## Invariant #8: WireGuard Tunnel is Monitored
+## Invariant #8: The Cloud ↔ Home Tunnel is Monitored
 
-**Statement:** WireGuard status is checked every 60 seconds. Ping latency is logged. Connection drops trigger alerts.
+**Statement:** Tunnel health is probed continuously and drops trigger alerts.
 
 **Why:** Home ↔ cloud inference depends on this tunnel; failures are silent without monitoring.
 
+**Note on transport:** the design called for WireGuard; what shipped is an **SSH tunnel**
+(`portfolio-ai-tunnel.service` on the VPS), so the checks below target that. WireGuard is not
+installed. Monitoring is real: a 5-minute health aggregator on the VPS, a 30-minute canary on the
+T5810, and an external healthchecks.io dead-man's switch, all paging via ntfy.
+
 **How to Verify:**
 ```bash
-# Check tunnel status
-sudo wg show
+# On the VPS — is the tunnel process up?
+systemctl is-active portfolio-ai-tunnel.service     # -> active
 
-# Should show:
-# - interface: wg0
-# - peers: 1 (cloud)
-# - latest handshake: < 2 minutes ago
+# Are the forwarded ports actually answering through it?
+curl -fsS http://127.0.0.1:8004/v1/models >/dev/null && echo "vLLM reachable"
+curl -fsS http://127.0.0.1:6333/collections  >/dev/null && echo "Qdrant reachable"
 
-# Check latency
-ping -c 1 10.0.0.2
-
-# Should be < 50ms. If > 100ms, investigate.
+# A dead tunnel typically presents as connection-refused on every forwarded port at once.
 
 # Check logs
 tail -20 /var/log/wireguard-monitor.log
@@ -368,8 +369,9 @@ git tag | tail -3 | grep -q "v" && echo "✓ Inv #6: Tags exist for rollback" ||
 # Invariant 7: Backups valid
 ls /backup/*.sql.gz | wc -l | grep -qE '[0-9]{2,}' && echo "✓ Inv #7: Backups exist" || echo "✗ FAIL: Inv #7"
 
-# Invariant 8: WireGuard connected
-ping -c 1 10.0.0.2 > /dev/null && echo "✓ Inv #8: Tunnel connected" || echo "✗ FAIL: Inv #8"
+# Invariant 8: cloud <-> home tunnel up (SSH tunnel, not WireGuard — see #8 above)
+curl -fsS --max-time 5 http://127.0.0.1:8004/v1/models > /dev/null \
+  && echo "✓ Inv #8: Tunnel connected" || echo "✗ FAIL: Inv #8"
 
 # Invariant 9: RLS enabled
 psql -c "SELECT COUNT(*) FROM pg_tables WHERE rowsecurity = true;" | grep -qE '[5-9]|[0-9]{2}' && echo "✓ Inv #9: RLS enabled" || echo "✗ FAIL: Inv #9"

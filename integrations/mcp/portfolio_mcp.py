@@ -19,10 +19,13 @@ Tools:
 The tool LOGIC lives in plain async functions (importable/testable with no `mcp` dep). The
 MCP transport is a guarded wrapper so this file imports fine for tests even without the SDK.
 
-Env (all optional):
+Env:
   CWDOTCOM_WS_URL        default wss://dev.cwetzel.com/ws/chat        (portfolio_answer)
   CWDOTCOM_RETRIEVE_URL  default https://dev.cwetzel.com/api/retrieve (portfolio_search)
-  VERIFIER_URL           default http://10.0.1.115:8007              (portfolio_verify; LAN)
+  VERIFIER_URL           REQUIRED for portfolio_verify — no default.  (e.g. http://<judge-host>:8007)
+                         The judge is a LAN-only service, so its address is deployment-specific
+                         and is not committed here. Set it in the MCP server's env. Without it,
+                         portfolio_verify reports unconfigured; portfolio_answer is unaffected.
 """
 import asyncio
 import os
@@ -41,7 +44,7 @@ WS_URL       = os.environ.get("CWDOTCOM_WS_URL", "wss://dev.cwetzel.com/ws/chat"
 # Grounded-chunks REST seam on the VPS proxy. embed/rerank bind 127.0.0.1 on the T5810
 # (localhost-only), so search goes through the public endpoint, not the LAN microservices.
 RETRIEVE_URL = os.environ.get("CWDOTCOM_RETRIEVE_URL", "https://dev.cwetzel.com/api/retrieve").rstrip("/")
-VERIFIER_URL = os.environ.get("VERIFIER_URL", "http://10.0.1.115:8007").rstrip("/")
+VERIFIER_URL = os.environ.get("VERIFIER_URL", "").rstrip("/")
 
 _FOLLOWUPS_RE = re.compile(r"\n*(?:FOLLOWUPS\s*:|\*\*Follow-?ups?:?\*\*).*", re.IGNORECASE | re.DOTALL)
 
@@ -74,6 +77,10 @@ async def search_tool(question: str, k: int = 5) -> dict:
 
 async def verify_tool(question: str, answer: str, chunks: list) -> dict:
     """Faithfulness check via the out-of-band judge (asrock). Grade any (q, answer, chunks)."""
+    if not VERIFIER_URL:
+        # Fail loud but harmless: an unset judge address must never look like a clean verdict.
+        return {"error": "VERIFIER_URL is not set; portfolio_verify is unconfigured.",
+                "faithfulness": None, "flagged": None, "verdict_type": None, "claims": []}
     payload = {"query": question, "answer": answer,
                "chunks": [{"title": c.get("title", ""), "source": c.get("source", ""),
                            "content": c.get("content", "")} for c in (chunks or [])]}

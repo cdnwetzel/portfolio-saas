@@ -19,7 +19,9 @@ import sys
 from pathlib import Path
 import requests
 
-VLLM_URL = os.environ.get("VLLM_URL", "http://10.0.1.125:8003")
+# Defaults to localhost: the summarizing model (pscode-prod on :8003) is a LAN-only service,
+# so this is normally run on the box that hosts it. Off-box, pass --vllm-url or set VLLM_URL.
+VLLM_URL = os.environ.get("VLLM_URL", "http://127.0.0.1:8003")
 MODEL = os.environ.get("KB_MODEL", "pscode-prod")
 
 # Chunk size for map phase (~3k tokens, well within the 16k context limit)

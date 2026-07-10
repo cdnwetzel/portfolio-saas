@@ -10,10 +10,10 @@
 # so index vectors match query vectors) as the `chris` user (model cached there).
 #
 # Usage:  ./scripts/reindex_kb.sh
-# Env:    T5810_HOST (default root@10.0.1.125)
+# Env:    T5810_HOST (default root@ai.cwetzel.com)
 set -euo pipefail
 
-T5810="${T5810_HOST:-root@10.0.1.125}"
+T5810="${T5810_HOST:-root@ai.cwetzel.com}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO_KB="${HERE}/../knowledge_base"
 REMOTE_KB="/tmp/knowledge_base"

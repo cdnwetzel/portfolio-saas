@@ -16,10 +16,19 @@ pip install -r requirements.txt
 python3 portfolio_mcp.py           # stdio MCP server (what mcporter connects to)
 ```
 
-## Config (env, all optional)
-`CWDOTCOM_WS_URL` (default `wss://dev.cwetzel.com/ws/chat`), `EMBED_URL`/`QDRANT_URL`/`RERANK_URL`
-(default the T5810 LAN `10.0.1.125:8005/6333/8006`), `VERIFIER_URL` (default asrock `10.0.1.115:8007`),
-`QDRANT_COLLECTION` (default `documents`).
+## Config (env)
+| Var | Default | Used by |
+|---|---|---|
+| `CWDOTCOM_WS_URL` | `wss://dev.cwetzel.com/ws/chat` | `portfolio_answer` |
+| `CWDOTCOM_RETRIEVE_URL` | `https://dev.cwetzel.com/api/retrieve` | `portfolio_search` |
+| `VERIFIER_URL` | **none — required** | `portfolio_verify` |
+
+`portfolio_search` goes through the proxy's `/api/retrieve` seam rather than talking to the
+embed/rerank services directly: those bind `127.0.0.1` on the T5810 and aren't reachable off-box.
+
+The faithfulness judge is a LAN-only service, so its address is deployment-specific and is not
+committed here — set `VERIFIER_URL` in the MCP server's env. Without it, `portfolio_verify` returns
+an "unconfigured" error rather than a misleading clean verdict; `portfolio_answer` is unaffected.
 
 ## Test the logic without the MCP SDK
 ```bash

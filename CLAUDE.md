@@ -207,11 +207,13 @@ python3 scripts/eval_graded.py
 
 ## Further Reading
 
-- **Architecture (current):** [`docs/02-architecture.md`](docs/02-architecture.md)
-- **Test plan:** [`docs/03-test-plan.md`](docs/03-test-plan.md)
+- **Architecture (current):** this file, plus [`README.md`](README.md)
 - **Deploy / operate:** [`DEPLOYMENT.md`](DEPLOYMENT.md), [`OPERATIONS.md`](OPERATIONS.md)
 - **Constraints:** [`red-lines.md`](red-lines.md), [`invariants.md`](invariants.md)
 - **Design docs:** [`plans/`](plans/)
+- **Test plan:** [`docs/03-test-plan.md`](docs/03-test-plan.md)
+- **Historical planning:** [`docs/02-architecture.md`](docs/02-architecture.md) — the Gate-1 design.
+  It specifies WireGuard and Llama 2 70B; what shipped is an SSH tunnel and Qwen2.5-Coder-14B.
 - **The SaaS that wasn't:** [`docs/archive/`](docs/archive/)
 
 ---
