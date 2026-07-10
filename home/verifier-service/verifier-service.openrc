@@ -19,7 +19,7 @@ respawn_period=30
 command_user="chris:chris"
 
 # Config (override in /etc/conf.d/verifier-service):
-#   VERIFIER_BIND=10.0.1.115   # THIS box's LAN IP — bind here (not 0.0.0.0) so the
+#   VERIFIER_BIND=<asrock-lan-ip>   # THIS box's LAN IP — bind here (not 0.0.0.0) so the
 #                              # T5810 tunnel reaches 8007 without exposing it LAN-wide.
 #   JUDGE_BACKEND=ollama
 #   JUDGE_MODEL=qwen2.5:7b-instruct-q4_K_M

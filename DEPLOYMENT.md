@@ -50,7 +50,7 @@
 │                                                         │
 │ Portfolio AI                                            │
 │ ├─ Qdrant:6333 (Vector DB, indexed)                    │
-│ ├─ embed-service:8005 (all-MiniLM-L6-v2, CPU)          │
+│ ├─ embed-service:8005 (bge-base-en-v1.5, CPU)          │
 │ └─ rerank-service:8006 (bge-reranker-base, CPU)        │
 └─────────────────────────────────────────────────────────┘
 ```

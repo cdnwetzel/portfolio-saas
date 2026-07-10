@@ -11,7 +11,7 @@ Ollama (default, low-friction on one 8 GB card) or any OpenAI-compatible endpoin
 
 Env config:
   VERIFIER_BIND     default 127.0.0.1 (localhost-only). Set to the box's LAN IP
-                    (e.g. 10.0.1.115) so the T5810's tunnel -L 8007:<ip>:8007 can reach
+                    (e.g. <asrock-lan-ip>) so the T5810's tunnel -L 8007:<ip>:8007 can reach
                     it while nothing else on the LAN can. Avoid 0.0.0.0 (LAN-wide bind).
                     (Distinct from setup-verifier.sh's VERIFIER_HOST, which is the SSH target.)
   VERIFIER_PORT     default 8007
@@ -303,7 +303,7 @@ async def health():
 if __name__ == "__main__":
     import uvicorn
     # Default to localhost-only. On the asrock box, set VERIFIER_BIND to its LAN IP
-    # (e.g. 10.0.1.115) so the T5810 tunnel can reach it without exposing 8007 LAN-wide.
+    # (e.g. <asrock-lan-ip>) so the T5810 tunnel can reach it without exposing 8007 LAN-wide.
     uvicorn.run(
         app,
         host=os.getenv("VERIFIER_BIND", "127.0.0.1"),

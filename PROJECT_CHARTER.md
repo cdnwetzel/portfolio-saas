@@ -1,5 +1,10 @@
 # Portfolio AI SaaS — Project Charter
 
+> **⚠️ Historical planning doc.** This is the original GATE-0 charter for a multi-tenant SaaS.
+> That scope was cut: what shipped is a single-tenant portfolio RAG chat, with no tenants,
+> database, auth, or billing. The scaffold's code lives on `legacy/saas-scaffold`; its design
+> docs are in [`docs/archive/`](docs/archive/). See CLAUDE.md for the current architecture.
+
 **Project Name:** Portfolio AI SaaS Platform  
 **Project Lead:** Chris Wetzel (cdnwetzel)  
 **Tech Architect:** Chris Wetzel  

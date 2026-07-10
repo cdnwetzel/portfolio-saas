@@ -1,5 +1,11 @@
 # Portfolio RAG System: Ready for Production Deployment
 
+> **⚠️ Point-in-time snapshot (2026-06-07), kept as a record.** Numbers below were true then and
+> are stale now: the embedder was `all-MiniLM-L6-v2` (384-d) before the move to `bge-base-en-v1.5`
+> (768-d), the knowledge base has since been re-chunked, and the 32B trial was reverted to the 14B.
+> For current state see [`../../DEPLOYMENT.md`](../../DEPLOYMENT.md),
+> [`../../OPERATIONS.md`](../../OPERATIONS.md) and `CLAUDE.md`.
+
 **Status:** ✅ READY TO LAUNCH
 
 **Date:** 2026-06-07

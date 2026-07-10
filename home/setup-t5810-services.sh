@@ -11,10 +11,10 @@
 #
 # Run from the repo root on a machine with SSH access to the T5810.
 # Usage:  ./home/setup-t5810-services.sh
-# Env:    T5810_HOST (default root@10.0.1.125)
+# Env:    T5810_HOST (default root@ai.cwetzel.com; override with a LAN address if preferred)
 set -euo pipefail
 
-T5810="${T5810_HOST:-root@10.0.1.125}"
+T5810="${T5810_HOST:-root@ai.cwetzel.com}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 install_service() {

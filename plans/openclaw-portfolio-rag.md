@@ -39,8 +39,8 @@ self-contained; OpenClaw is a sandbox that "must earn a role").
 2. **`portfolio_search(question, k=5) → {chunks:[{title,source,content,score}]}`  — SECONDARY.**
    Raw grounded chunks, for when OpenClaw wants to combine KB facts with other tools/reasoning.
    - Impl: either (a) call cwdotcom LAN microservices directly — `expand_query` →
-     `POST 10.0.1.125:8005/embed {text}` → Qdrant `POST 10.0.1.125:6333/collections/documents/points/search {vector,limit,with_payload}`
-     → `POST 10.0.1.125:8006/rerank {query,documents,top_k}` — or (b) **[recommended]** call the new
+     `POST <t5810-lan-ip>:8005/embed {text}` → Qdrant `POST <t5810-lan-ip>:6333/collections/documents/points/search {vector,limit,with_payload}`
+     → `POST <t5810-lan-ip>:8006/rerank {query,documents,top_k}` — or (b) **[recommended]** call the new
      cwdotcom REST seam below so the flow isn't duplicated.
    - ⚠️ Grounding contract: if OpenClaw generates from these chunks itself, its prompt MUST say
      "answer ONLY from these chunks; if not covered, say you don't have it," or we reintroduce the

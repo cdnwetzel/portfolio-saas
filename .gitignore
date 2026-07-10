@@ -107,3 +107,6 @@ eval/results/
 
 # Regenerable Qdrant export snapshots (rerun scripts/export_qdrant_md.py)
 exports/
+
+# Claude Code local permissions (machine-specific; contains LAN hosts)
+.claude/settings.local.json

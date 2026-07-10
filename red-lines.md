@@ -1,5 +1,9 @@
 # Red Lines — Absolute Prohibitions
 
+> **Still in force.** These constraints govern the running system and are cited from live code
+> (`cloud/api-proxy.py` enforces #2, metadata-only logging). Two clauses are moot after the SaaS
+> scope was cut: the `alembic` schema-migration requirements, since the system has no database.
+
 **Project:** Portfolio AI SaaS  
 **Purpose:** Define non-negotiable constraints. Violating any of these stops the project.  
 **Owner:** Tech Architect  

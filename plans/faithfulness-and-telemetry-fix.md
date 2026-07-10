@@ -38,7 +38,7 @@ thing that makes the score recoverable right now.
 
 - On the cloud proxy box: `systemctl show api-proxy --property=Environment`
   → is `VERIFIER_URL` set? (enabled vs off)
-- If enabled, on the asrock judge box (`10.0.1.115`):
+- If enabled, on the asrock judge box (`<asrock-lan-ip>`):
   `sqlite3 ~/verifier/verdicts.db "SELECT ts, faithfulness, flagged, n_contradicted,
   verdict_type FROM verdicts WHERE answer LIKE '%40 GB of storage%' OR answer LIKE
   '%AMD GPU%' ORDER BY ts DESC LIMIT 5;"`

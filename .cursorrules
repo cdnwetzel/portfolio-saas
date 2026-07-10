@@ -1,9 +1,16 @@
 # Code Standards & AI Guardrails
 
-**Project:** Portfolio AI SaaS
+> **Scope note.** The multi-tenant SaaS this file was written for was scoped out. What runs is a
+> single-tenant portfolio RAG chat: no database, no auth, no billing, no `src/`. Rules below that
+> reference `src/`, SQLAlchemy models, Alembic migrations or tenants apply to the archived
+> scaffold (`legacy/saas-scaffold`), **not** to this codebase. The live layout is `cloud/`
+> (FastAPI proxy), `home/` (GPU-host services), `frontend/` (React), `scripts/` (indexer, eval).
+> See CLAUDE.md. Where this file and `red-lines.md` disagree, **red-lines.md wins**.
+
+**Project:** Portfolio AI (single-tenant RAG chat)
 **Framework:** psplan 5-Gate Workflow
 **Audience:** Enterprise (law firms, IT managers, consultants)
-**Scope:** 30-day MVP to production launch
+**Scope:** Portfolio demo on owned GPU hardware
 
 ---
 
@@ -91,24 +98,22 @@
 
 ---
 
-## Compliance (Law Firm / Enterprise Context)
+## Privacy & Logging
 
-### Audit Logging
-- ✅ Log every inference: user_id, tenant_id, timestamp, tokens, query, response_length
-- ✅ Log every data access: who accessed what, when
-- ✅ Log every auth event: login, logout, token refresh, API key use
-- ✅ Audit logs immutable (INSERT only, no UPDATE/DELETE)
-- ✅ Retention: configurable per tenant (3mo–7yr)
-- 🚫 **NEVER** log sensitive data (customer data, PII, queries containing secrets)
+### Logging — metadata only
+The chat is public and anonymous. There are no accounts, no database, and nothing to attribute
+a query to. `red-lines.md` #2 is absolute and `cloud/api-proxy.py` enforces it.
 
-### Data Isolation (Multi-Tenancy)
-- ✅ Every query filtered by `tenant_id` at DB layer (RLS)
-- ✅ Knowledge bases isolated per tenant (Qdrant scoped)
-- ✅ Chat sessions isolated per user + tenant
-- ✅ API keys scoped to single tenant
-- ✅ Billing tracked per tenant (no cross-tenant aggregation)
-- 🚫 **NEVER** aggregate or share data across tenants
-- 🚫 **NEVER** allow tenant A to query tenant B's data
+- ✅ Log request metadata: `request_id`, timestamps, durations, token *counts*, chunk counts
+- ✅ Log retrieval decisions: how many candidates, how many survived the per-doc cap
+- 🚫 **NEVER** log query text or response text — not at DEBUG, not "temporarily" (red-lines.md #2)
+- 🚫 **NEVER** persist chat history server-side; it lives in the browser's localStorage
+
+### Multi-tenancy — not applicable
+The tenant isolation, RLS, API-key scoping and per-tenant billing rules that were here describe
+the SaaS scaffold that was scoped out (`legacy/saas-scaffold`; designs in `docs/archive/`). The
+running system is single-tenant by construction: one knowledge base, one Qdrant collection, no
+auth layer. Do not add `tenant_id` to anything.
 
 ### Data Retention & Deletion
 - ✅ Implement hard delete (no soft deletes, no recovery after deletion)

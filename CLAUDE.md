@@ -1,345 +1,233 @@
 # Portfolio AI Chat
 
-> **What this actually is:** a single-tenant **portfolio RAG chat** at dev.cwetzel.com — a
-> React frontend + FastAPI proxy on a VPS, talking over an SSH tunnel to vLLM (Qwen2.5-Coder-14B
-> + pscode LoRA), Qdrant, a CPU embedder, and a CPU reranker on the T5810. **The multi-tenant
-> SaaS / Stripe / billing / auth content below is archived aspiration** — that scaffold lived in
-> `src/` and is preserved on the `legacy/saas-scaffold` branch; it is NOT part of the running
-> system. See the "Actual Deployment Config" and "Documentation Alignment" sections for reality.
+A single-tenant **portfolio RAG chat** at [dev.cwetzel.com](https://dev.cwetzel.com): a React
+frontend and a FastAPI proxy on an Ubuntu VPS, talking over an SSH tunnel to vLLM
+(Qwen2.5-Coder-14B + pscode LoRA), Qdrant, a CPU embedder and a CPU reranker on a T5810 in a home
+office, plus a faithfulness verifier on a second home box.
 
-## Project Overview
+It is a professional-portfolio showcase running on owned hardware (2x A4500 GPUs, ~400 Mbps
+symmetric Verizon FIOS), not a revenue product. An earlier multi-tenant SaaS scope (tenants,
+Postgres, JWT/API keys, Stripe billing) was **cut**: its code is on the `legacy/saas-scaffold`
+branch and its design docs are in [`docs/archive/`](docs/archive/). Nothing in the running system
+has a database, an account, or a tenant — so if you find `tenant_id` anywhere, it's archaeology.
 
-This is a single-tenant portfolio RAG chat built on personal infrastructure (2x A4500 GPUs +
-~400 Mbps symmetric Verizon FIOS) — a professional-portfolio showcase, not a revenue-generating SaaS product. The
-original multi-tenant SaaS vision (below) was scoped down; the SaaS scaffold is archived on
-`legacy/saas-scaffold`.
-
-Following the **5-Gate Workflow** (psplan framework):
-- **GATE 0** ✅ Initiation (Charter, Vision, Red-lines, Invariants)
-- **GATE 1** ⏳ Planning (PRD, Architecture, Test Plan, .cursorrules)
-- **GATE 2** 🔲 Development (Code + Tests)
-- **GATE 3** 🔲 Review & Testing (QA + Code Review)
-- **GATE 4** 🔲 Release (Deployment + Handoff)
-- **GATE 5** 🔲 Production Validation (Monitoring + Closure)
+**Status:** deployed and in production, on the psplan 5-Gate workflow — Gate 0 (charter, vision,
+red-lines, invariants) through Gate 5 (monitoring, closure) are complete for the current scope.
 
 ## Core Architecture
 
 ```
 User Browser
-    ↓ HTTPS
-cwetzel.com Cloud Server
-├─ Apache (SSL, reverse proxy, WSS)
-├─ FastAPI API Proxy (port 8000)
-│  └─ Routes to T5810 via SSH tunnel
-└─ Static HTML frontend
-    ↓ [SSH Tunnel]
-    ↓ (ai.cwetzel.com:8004)
-T5810 Home Server (Gentoo/OpenRC, Your Hardware)
-├─ vLLM (port 8004, local LAN only)
-│  └─ Model: Qwen2.5-Coder-14B-Pscode (BF16, 16K context)
-│  └─ 2x A4500 NVLink, tensor parallel
-├─ Qdrant (port 6333, vector DB — dense 768-d cosine)
-├─ Embedding service (port 8005, BAAI/bge-base-en-v1.5 768-d, CPU)
-├─ Reranker service (port 8006, bge-reranker-base, CPU)
+    ↓ HTTPS / WSS
+cwetzel.com Cloud Server (Ubuntu VPS)
+├─ Apache (SSL termination, reverse proxy, WSS)
+├─ FastAPI API proxy (port 8000, systemd: api-proxy.service)
+└─ Static React build (/var/www/dev.cwetzel.com/)
+    ↓ [SSH tunnel — portfolio-ai-tunnel.service, initiated by the VPS]
+T5810 Home Server (Gentoo/OpenRC)
+├─ vLLM (port 8004, LAN-only) — Qwen2.5-Coder-14B-Pscode, BF16, 16K context
+│  └─ 2x RTX A4500, NVLink, tensor parallel
+├─ Qdrant (port 6333) — dense 768-d cosine
+├─ Embedding service (port 8005) — BAAI/bge-base-en-v1.5, CPU
+├─ Reranker service (port 8006) — bge-reranker-base, CPU
 └─ Knowledge base (indexed docs)
-    ↓ tunnel also forwards :8007 → asrock B550 (home LAN) NOT the T5810
-asrock B550 Home Server (Gentoo/OpenRC)
-└─ Faithfulness verifier (port 8007, Qwen2.5-7B via Ollama, CPU)
+    ↓ the same tunnel forwards :8007 → asrock B550 over the home LAN
+asrock B550 (Gentoo/OpenRC)
+└─ Faithfulness verifier (port 8007) — Qwen2.5-7B via Ollama, CPU
 ```
 
-**RAG pipeline:** query → alias-expand → embed (8005, bge-base 768-d) → Qdrant cosine
-top-15 → rerank to top-5 (8006, CPU cross-encoder, ≤1 chunk/doc) → fit to token budget
-→ vLLM stream → (out-of-band) fire-and-forget faithfulness verify (8007, asrock). The
-reranker adds precision the bi-encoder can't: cosine surfaces candidates, the
-cross-encoder picks the best 5. CPU-only on the T5810's idle 256GB DDR4 — no VRAM
-contention with vLLM. Fails open (cosine top-5) if the reranker is down; the verifier
-is fully fail-open (chat unaffected if asrock is down).
+**RAG pipeline:** query → alias-expand → embed (8005, bge-base 768-d) → Qdrant cosine top-15 →
+rerank to top-5 (8006, CPU cross-encoder, ≤1 chunk/doc) → fit to token budget → vLLM stream →
+(out-of-band) fire-and-forget faithfulness verify (8007).
+
+The reranker adds precision the bi-encoder can't: cosine surfaces candidates, the cross-encoder
+picks the best 5. It runs CPU-only on the T5810's idle 256 GB DDR4, so it never contends with vLLM
+for VRAM. It **fails open** to cosine top-5 if the reranker is down; the verifier is fully fail-open
+(chat is unaffected if asrock is down).
 
 A deterministic **prompt-extraction guardrail** (`cloud/guardrails.py`) refuses
-"reveal/repeat your prompt"-style attacks before the LLM. A **graded eval**
-(`scripts/eval_graded.py` + `eval/golden_set.yaml`) gates changes; a **hybrid dense+BM25**
-path exists (`HYBRID_SEARCH`) but is OFF — an A/B showed it regressed on this small KB.
+"reveal/repeat your prompt"-style attacks before they reach the LLM. A **graded eval**
+(`scripts/eval_graded.py` + `eval/golden_set.yaml`) gates changes. A **hybrid dense+BM25** path
+exists (`HYBRID_SEARCH`) but is **OFF** — an A/B showed it regressed on this small KB (4.41 vs 4.82).
+
+### Known characteristic: the reranker truncates
+
+`bge-reranker-base` caps each (query, chunk) pair at **512 tokens** — an XLM-RoBERTa
+`max_position_embeddings=514` limit, not a tunable. The indexer's 400-word chunks tokenize to a
+~640-token median, so about 67% of chunks are scored on roughly their first three-quarters. This
+affects **ranking only**: `rerank_documents()` returns indices and the caller re-reads the full
+payload, so the LLM always receives whole chunks. Widening it means a bigger model (`v2-m3`, 8194
+positions, at real CPU cost) or smaller chunks. Measure before changing either.
 
 ## Key Features
 
-- **Multi-Tenancy**: Row-level security, tenant isolation via JWT/API keys
-- **GPU Inference**: vLLM on 2x A4500s, tensor parallelism across both cards
-- **Scalable Edge Architecture**: Cloud frontend for low latency, home GPU for compute
-- **Automated Data Sync**: GitHub webhooks trigger re-indexing of public repos
-- **SaaS Ready**: Stripe integration, usage-based billing, API keys
-- **Production Grade**: Docker, Alembic migrations, health checks, monitoring
+- **Grounded answers** — every claim comes from the retrieved KB; the model says "I don't have that
+  documented" rather than inventing, and the UI shows the exact source chunks it used.
+- **Owned GPU inference** — vLLM on 2x A4500s with tensor parallelism. Zero cloud GPU cost.
+- **Edge/compute split** — cloud frontend for latency, home GPUs for compute, joined by one SSH tunnel.
+- **Out-of-band faithfulness verification** — an independent 7B judge on a separate machine grades
+  whether an answer's claims are grounded, without ever blocking the response.
+- **Per-message telemetry** — time-to-first-token, decode throughput and total latency under each
+  answer (metadata only, never content).
+- **Regression-gated** — graded eval, plus a live self-test that `cloud/deploy.sh` runs before it
+  finishes.
+- **Monitored** — a 5-minute VPS health aggregator, a 30-minute T5810 canary and an external
+  healthchecks.io dead-man's switch, all paging via ntfy.
 
 ## Directory Structure
 
 ```
-portfolio-saas/
-├── .github/workflows/          # CI/CD pipelines
-├── alembic/                    # Database migrations
-├── docs/                       # This documentation
-│   ├── 01-architecture.md
-│   ├── 02-backend-setup.md
-│   ├── 03-frontend-setup.md
-│   ├── 04-infrastructure.md
-│   ├── 05-deployment.md
-│   ├── 06-billing.md
-│   └── 07-checklist.md
-├── src/
-│   ├── api/                    # API routes (chat, auth, billing, kb)
-│   ├── core/                   # Config, security, database
-│   ├── models/                 # SQLAlchemy models
-│   ├── services/               # Business logic (inference, billing, RAG)
-│   ├── middleware/             # Auth middleware, request tracking
-│   └── main.py                 # FastAPI app entry point
-├── frontend/
-│   ├── src/
-│   │   ├── pages/              # Dashboard, signup, login
-│   │   ├── components/         # Reusable UI components
-│   │   ├── lib/                # API client, utilities
-│   │   └── styles/             # Tailwind + custom CSS
-│   └── vite.config.ts
-├── cloud/                      # Cloud Ubuntu deployment
-│   ├── docker-compose.yml
-│   ├── setup-proxy-apache.sh
-│   ├── .env.example
-│   └── deploy.sh
-├── home/                       # Home Gentoo server config
-│   ├── systemd/
-│   ├── wg0.conf
-│   └── requirements.txt
-├── tests/                      # Unit and integration tests
-├── docker-compose.yml          # Local dev environment
-├── requirements.txt            # Python dependencies
-├── .env.example
-└── README.md
+cwdotcom/
+├── .github/workflows/ci.yml    # CI: offline unit tests + frontend build (deliberately no deploy)
+├── cloud/                      # FastAPI proxy — deployed to the VPS
+│   ├── api-proxy.py            # WS chat, /api/search, /api/retrieve, RAG orchestration
+│   ├── guardrails.py           # prompt-extraction refusal (pre-LLM, deterministic)
+│   ├── context_manager.py      # prompt/history caps + token-budget context fitting
+│   ├── query_expansion.py      # curated alias expansion
+│   ├── sparse_bm25.py          # BM25 for the (disabled) hybrid path
+│   ├── systemd/                # api-proxy, tunnel, health timers
+│   └── deploy.sh               # the real deploy: build → rsync → restart → self-test gate
+├── home/                       # services that run on the GPU / LAN boxes
+│   ├── embed-service/          # bge-base-en-v1.5, CPU, port 8005
+│   ├── rerank-service/         # bge-reranker-base, CPU, port 8006
+│   ├── verifier-service/       # faithfulness judge (asrock), port 8007
+│   └── qdrant/                 # OpenRC unit for Qdrant
+├── frontend/                   # React + Vite + Tailwind; built and rsync'd
+├── scripts/                    # indexer, graded eval, self-test, health aggregator
+├── knowledge_base/             # the indexed corpus (resume, case studies, posts, infra)
+├── eval/golden_set.yaml        # graded-eval questions
+├── integrations/mcp/           # MCP server exposing this RAG to an external agent
+├── tests/                      # offline unit tests (stdlib-only modules)
+├── plans/                      # design docs, for work done and work proposed
+└── docs/archive/               # the scoped-out SaaS design docs
 ```
-
-## Implementation Phases
-
-### Phase 1: Foundation (Current)
-- [x] Database schema design (PostgreSQL)
-- [x] Multi-tenancy architecture
-- [x] Auth middleware (JWT + API keys)
-- [x] Docker orchestration
-- [ ] **NEXT**: Create Alembic migrations
-- [ ] **NEXT**: Implement auth endpoints (signup/login)
-- [ ] **NEXT**: Deploy local dev environment
-
-### Phase 2: Core API
-- [ ] Chat streaming endpoints
-- [ ] Knowledge base management
-- [ ] Document upload/indexing
-- [ ] RAG pipeline integration
-- [ ] Usage tracking
-
-### Phase 3: Frontend Dashboard
-- [ ] Login/signup pages
-- [ ] Dashboard overview
-- [ ] Knowledge base management UI
-- [ ] API key generation
-- [ ] Billing/subscription UI
-
-### Phase 4: Infrastructure
-- [ ] WireGuard tunnel (Gentoo ↔ Cloud)
-- [ ] Apache configuration with SSL (cloud/setup-proxy-apache.sh)
-- [ ] Docker deployment (Cloud)
-- [ ] Database migrations
-- [ ] Health checks
-
-### Phase 5: Billing & Revenue
-- [ ] Stripe product configuration
-- [ ] Webhook handlers
-- [ ] Usage billing calculations
-- [ ] Invoice generation
-
-### Phase 6: DevOps & Launch
-- [ ] GitHub Actions CI/CD
-- [ ] Automated deployment
-- [ ] Monitoring setup
-- [ ] DNS cutover
-- [ ] Go-live
 
 ## Technology Stack
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| **GPU Inference** | vLLM + Qwen2.5-Coder-14B-Pscode | LLM serving on 2x A4500s (T5810) |
-| **API Framework** | FastAPI + Uvicorn | Async Python proxy (cloud server) |
-| **Vector DB** | Qdrant | Semantic search + RAG retrieval (dense cosine top-15) |
-| **Embeddings** | BAAI/bge-base-en-v1.5 (768-d) | Query/document → vector (CPU service, port 8005) |
+| **GPU inference** | vLLM + Qwen2.5-Coder-14B-Pscode | LLM serving on 2x A4500s (T5810) |
+| **API framework** | FastAPI + Uvicorn | Async Python proxy (cloud server) |
+| **Vector DB** | Qdrant | Dense cosine retrieval, top-15 candidates |
+| **Embeddings** | BAAI/bge-base-en-v1.5 (768-d) | Query/document → vector (CPU, port 8005) |
 | **Reranker** | bge-reranker-base | Cross-encoder precision, top-15 → top-5 (CPU, port 8006) |
-| **Faithfulness verifier** | Qwen2.5-7B via Ollama (CPU) | Out-of-band claim grounding (asrock B550, port 8007) |
-| **Eval / guardrail** | graded eval + golden set; prompt-extraction guardrail | Regression gate (`scripts/eval_graded.py`) + pre-LLM refusal (`cloud/guardrails.py`) |
+| **Faithfulness verifier** | Qwen2.5-7B via Ollama (CPU) | Out-of-band claim grounding (asrock, port 8007) |
+| **Eval / guardrail** | graded eval + golden set; prompt-extraction guardrail | Regression gate + pre-LLM refusal |
 | **Frontend** | React + Vite + Tailwind | Built + rsynced to dev.cwetzel.com |
-| **Reverse Proxy** | Apache | SSL termination, static serving, WSS proxy |
-| **Networking** | SSH Tunnel | Secure VPS → T5810 → asrock (LAN-only access) |
-| **Knowledge Base** | Local filesystem | Indexed documents + case studies |
-| **Caching** | Browser localStorage | Per-session chat history |
+| **Reverse proxy** | Apache | SSL termination, static serving, WSS proxy |
+| **Networking** | SSH tunnel | VPS → T5810 → asrock (services stay LAN-only) |
+| **Chat history** | Browser localStorage | Per-session; nothing persisted server-side |
 
-## Key Configuration Files
+## Endpoints
 
-1. **docker-compose.yml** - Local dev environment (PostgreSQL, Redis, FastAPI)
-2. **src/main.py** - FastAPI application entry point
-3. **.env.example** - Environment variables template
-4. **cloud/docker-compose.yml** - Production cloud stack
-5. **cloud/setup-proxy-apache.sh** - Apache vhost + SSL + WSS reverse proxy setup
-6. **alembic/versions/*.py** - Database migrations
-7. **.github/workflows/deploy.yml** - GitHub Actions CI/CD
+The proxy exposes four routes. There is no auth layer — the chat is public and anonymous.
 
-## Key Endpoints
-
-| Method | Endpoint | Purpose | Auth |
-|--------|----------|---------|------|
-| **POST** | /api/auth/signup | Create new tenant | None |
-| **POST** | /api/auth/login | User login | None |
-| **POST** | /api/knowledge-base | Create KB | JWT |
-| **WS** | /ws/chat | Stream LLM responses | JWT/API Key |
-| **POST** | /api/api-keys | Generate API key | JWT |
-| **GET** | /api/dashboard | Tenant metrics | JWT |
-| **POST** | /api/billing/checkout | Create Stripe session | JWT |
-| **POST** | /webhooks/github | GitHub push event | Secret |
-| **POST** | /webhooks/stripe | Stripe event | Secret |
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| **GET** | `/health` | Liveness, for the health aggregator |
+| **POST** | `/api/search` | Debug: retrieve chunks for a query |
+| **POST** | `/api/retrieve` | Text-in / chunks-out seam (used by the MCP server) |
+| **WS** | `/ws/chat` | Stream a grounded answer, then source + timing metadata |
 
 ## Actual Deployment Config
 
-**On T5810 (Home Server, Gentoo/OpenRC):**
+**On the T5810 (Gentoo/OpenRC):**
 ```bash
-# vLLM Service (OpenRC: pscode-vllm; config /etc/pscode/pscode.conf + /etc/conf.d/pscode-vllm)
+# vLLM (OpenRC: pscode-vllm; config /etc/pscode/pscode.conf + /etc/conf.d/pscode-vllm)
 MODEL=qwen2.5-coder-14b-pscode   # served-model-name; base Qwen2.5-Coder-14B + pscode-prod LoRA
 PORT=8004
 TENSOR_PARALLEL_SIZE=2
-GPU_MEMORY_UTILIZATION=0.93  # 0.95 OOMs; 760 MiB free/A4500 — no room for spec-dec draft
+GPU_MEMORY_UTILIZATION=0.93      # 0.95 OOMs; 760 MiB free/A4500 — no room for spec-dec draft
 
 # Qdrant (OpenRC), embed-service 8005 (bge-base, CPU), rerank-service 8006 (bge-reranker, CPU)
 QDRANT_PORT=6333
 ```
 
-**On asrock B550 (home LAN, Gentoo/OpenRC):**
+**On the asrock B550 (Gentoo/OpenRC):**
 ```bash
 # Faithfulness verifier (OpenRC: verifier-service) + Ollama (OpenRC: ollama)
 VERIFIER_PORT=8007
 JUDGE_MODEL=qwen2.5:7b-instruct-q4_K_M   # CPU; independent of the 14B
 ```
 
-**On Cloud Server (cwetzel.com):**
+**On the cloud server (cwetzel.com):**
 ```bash
-# API Proxy (systemd: api-proxy.service; Apache terminates SSL/WSS in front)
-VLLM_URL=http://127.0.0.1:8004    # via SSH tunnel
-QDRANT_URL=http://127.0.0.1:6333  # via SSH tunnel
-EMBED_URL=http://127.0.0.1:8005   # embed-service (tunneled to T5810)
-RERANK_URL=http://127.0.0.1:8006  # rerank-service (tunneled to T5810)
+# API proxy (systemd: api-proxy.service; Apache terminates SSL/WSS in front)
+VLLM_URL=http://127.0.0.1:8004      # via SSH tunnel
+QDRANT_URL=http://127.0.0.1:6333    # via SSH tunnel
+EMBED_URL=http://127.0.0.1:8005     # embed-service (tunneled to T5810)
+RERANK_URL=http://127.0.0.1:8006    # rerank-service (tunneled to T5810)
 VERIFIER_URL=http://127.0.0.1:8007  # verifier (tunnel → T5810 → asrock); set via systemd drop-in
-HYBRID_SEARCH=0                    # hybrid dense+BM25 built but OFF (lost A/B vs dense on this KB)
+HYBRID_SEARCH=0                     # hybrid dense+BM25 built but OFF (lost its A/B)
 ```
 
-**SSH Tunnel (single connection, VPS → T5810, with T5810 as jump host to asrock):**
-Forwards 8004 (vLLM), 8005 (embed), 8006 (rerank), 6333 (Qdrant) — all `127.0.0.1` on the
-T5810 — plus **8007 → asrock:8007** (verifier, routed by the T5810 over the LAN).
-Managed by `portfolio-ai-tunnel.service` (systemd on the VPS).
+**SSH tunnel (single connection, VPS → T5810, with the T5810 as jump host to asrock):**
+Forwards 8004 (vLLM), 8005 (embed), 8006 (rerank) and 6333 (Qdrant) — all `127.0.0.1` on the
+T5810 — plus **8007 → asrock:8007** (verifier, routed by the T5810 over the LAN). Managed by
+`portfolio-ai-tunnel.service` (systemd on the VPS).
 
-## Deployment Checklist
+## Working On This Repo
 
-### Local Development
-- [ ] Clone repository
-- [ ] Copy `.env.example` → `.env` with local values
-- [ ] Run `docker-compose up -d`
-- [ ] Run `alembic upgrade head`
-- [ ] Test `curl http://localhost:8000/health`
+**Constraints that bind.** `red-lines.md` and `invariants.md` govern the running system and are
+cited from live code. The one that catches people: **never log query or response content** —
+metadata only (`red-lines.md` #2). Where `.cursorrules` and `red-lines.md` disagree, red-lines wins.
 
-### Cloud Ubuntu Setup
-- [ ] SSH key setup for deployment
-- [ ] DNS A record pointed to cloud IP
-- [ ] SSL certificate (Certbot)
-- [ ] `.env` configured with production secrets
-- [ ] `docker-compose up -d`
+**The knowledge base must not contain real internal IP addresses.** Public hostnames are fine.
 
-### Gentoo Home Server
-- [ ] WireGuard keys generated
-- [ ] `wg0.conf` configured
-- [ ] vLLM running with tensor parallelism
-- [ ] PostgreSQL accessible from cloud
+**Retrieval returns ≤1 chunk per source doc** (`RAG_MAX_PER_DOC`). A fact isolated in one chunk may
+not surface for a differently-phrased query, so put a corrected fact in the chunk whose topic
+matches the likely question — or duplicate it — and verify live with several phrasings.
 
-### GitHub Integration
-- [ ] Repository secrets configured
-- [ ] GitHub webhook created
-- [ ] CI/CD workflows enabled
+**Don't hand-patch the Qdrant index.** Rebuild it from the committed KB with `./scripts/reindex_kb.sh`.
 
-### Go-Live
-- [ ] DNS cutover
-- [ ] SSL verification
-- [ ] Smoke tests on production
-- [ ] Monitoring active
-- [ ] Slack notifications configured
+**Production actions need explicit authorization** — `cloud/deploy.sh`, `scripts/reindex_kb.sh`, and
+any vLLM change. CI deliberately does not deploy.
 
-## Quick Start Commands
+## Commands
 
 ```bash
-# Local development
-docker-compose up -d
-alembic upgrade head
+# Offline unit tests — stdlib-only modules, no live stack needed (this is what CI runs)
+python3 -m pytest tests/ home/verifier-service/test_verifier_core.py -v
 
-# Deploy to production
+# Frontend dev server (proxies /ws and /api to localhost:8000)
+cd frontend && npm install && npm run dev
+
+# Full-stack integration test — needs the live stack (proxy, vLLM, Qdrant, embed)
+python3 test_rag_system.py
+
+# Graded eval against the golden set (regression gate)
+python3 scripts/eval_graded.py
+
+# Deploy: build → rsync → restart → live self-test gate. Requires authorization.
 ./cloud/deploy.sh
 
-# View logs
-docker logs -f portfolio-saas-api-1
-docker exec portfolio-saas-api-1 tail -f /var/log/app.log
-
-# Database
-docker exec portfolio-saas-db-1 psql -U postgres -d saas_prod
+# Rebuild the Qdrant index from the committed KB. Requires authorization.
+./scripts/reindex_kb.sh
 ```
 
-## Resources & References
+## Further Reading
 
-- **Architecture Docs**: See `docs/01-architecture.md`
-- **Backend Setup**: See `docs/02-backend-setup.md`
-- **Frontend Setup**: See `docs/03-frontend-setup.md`
-- **Infrastructure**: See `docs/04-infrastructure.md`
-- **Deployment**: See `docs/05-deployment.md`
-- **Billing**: See `docs/06-billing.md`
-- **Getting Started**: See `docs/07-checklist.md`
-
-## Contact & Support
-
-For issues during setup, refer to the troubleshooting section in each documentation file.
-
----
+- **Architecture (current):** [`docs/02-architecture.md`](docs/02-architecture.md)
+- **Test plan:** [`docs/03-test-plan.md`](docs/03-test-plan.md)
+- **Deploy / operate:** [`DEPLOYMENT.md`](DEPLOYMENT.md), [`OPERATIONS.md`](OPERATIONS.md)
+- **Constraints:** [`red-lines.md`](red-lines.md), [`invariants.md`](invariants.md)
+- **Design docs:** [`plans/`](plans/)
+- **The SaaS that wasn't:** [`docs/archive/`](docs/archive/)
 
 ---
 
 ## Documentation Alignment
 
-**Last Updated**: 2026-06-10  
-**Current Phase**: MVP (RAG Chat Demo)
+Docs here describe reality, not aspiration. That took deliberate correction, and the corrections are
+worth remembering:
 
-### Recent Changes (2026-06-10)
+- **2026-06-10** — Aligned docs with the deployed system: React Vite build replaced standalone HTML;
+  the model is Qwen2.5-Coder-14B-Pscode (never Llama 2 70B); removed multi-tenant references.
+- **2026-07-10** — Removed the fictional CI (a workflow that rsync'd deleted `src/`), corrected the
+  README's embedder (`all-MiniLM-L6-v2` → `bge-base-en-v1.5`, 384-d → 768-d) and reverse proxy
+  (Nginx → Apache), rewrote `requirements.txt` to what the code imports (it had listed Stripe,
+  SQLAlchemy, Alembic, Redis), archived the SaaS design docs, and reconciled `.cursorrules` with
+  `red-lines.md` — it had instructed agents to log query text.
 
-After aligning docs with actual deployment:
-
-1. **Frontend**: Migrated from standalone HTML to React Vite build
-   - Source: `/frontend/src/` (React components, hooks)
-   - Deployed: `dev.cwetzel.com` (built via `npm run build`)
-   - Deployment: `rsync -avz --delete frontend/dist/ root@cwetzel.com:/var/www/dev.cwetzel.com/`
-   - See: [frontend/README-DEPLOYMENT.md](frontend/README-DEPLOYMENT.md)
-
-2. **Model**: Qwen2.5-Coder-14B-Pscode (not Llama 2 70B)
-   - Running on T5810 port 8004 (LAN-only)
-   - Accessible via SSH tunnel from cloud server
-   - Tensor parallel: 2x A4500 GPUs
-
-3. **Architecture**: Fixed docs to match actual setup
-   - Removed SaaS multi-tenant references (outdated)
-   - Clarified T5810 + SSH tunnel + cloud proxy structure
-   - Added actual tech stack (Qwen, Qdrant, BAAI embeddings, standalone HTML → React)
-
-### What This Means
-
-- **Documentation now reflects reality** (not aspirations)
-- **Frontend code matches deployed version** (useChat.js has correct model)
-- **Deployment is reproducible** (build + rsync script documented)
-- **Future changes should update both code AND docs**
-
-### Resources
-
-- **Deployment guide**: [frontend/README-DEPLOYMENT.md](frontend/README-DEPLOYMENT.md)
-- **Session notes**: Memory file `session-docs-alignment-2026-06-10.md`
-- **Architecture**: This file (updated above)
+**When you change the system, change the docs in the same commit.** A wrong doc is worse than a
+missing one: it is confidently wrong, and it survives long after the person who knew better moved on.

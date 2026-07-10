@@ -14,7 +14,7 @@
 # VERIFIER_BIND (optional): the address uvicorn binds to on the box. Default 127.0.0.1
 # (localhost-only). Set it to the box's LAN IP so the T5810 tunnel (-L 8007:<ip>:8007)
 # can reach it while nothing else on the LAN can — recommended over the old 0.0.0.0 bind.
-#   Usage:  VERIFIER_HOST=chris@10.0.1.115 VERIFIER_BIND=10.0.1.115 ./home/setup-verifier.sh
+#   Usage:  VERIFIER_HOST=chris@<asrock-lan-ip> VERIFIER_BIND=<asrock-lan-ip> ./home/setup-verifier.sh
 set -euo pipefail
 
 VHOST="${VERIFIER_HOST:?set VERIFIER_HOST=chris@<RYZEN_LAN_IP> (the spare box, not the T5810)}"

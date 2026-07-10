@@ -1,5 +1,10 @@
 # Invariants — Architectural Constants
 
+> **Still in force, with one exception.** The tenant-isolation invariant (PostgreSQL row-level
+> security) describes the multi-tenant SaaS that was scoped out — the running system has no
+> database and no tenants, so it is unverifiable rather than violated. Everything else here
+> governs production. See CLAUDE.md for the current architecture.
+
 **Project:** Portfolio AI SaaS  
 **Purpose:** Define properties that MUST always be true in production.  
 **Owner:** Tech Architect  
