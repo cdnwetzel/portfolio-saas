@@ -33,7 +33,7 @@ T5810 Home Server (Gentoo/OpenRC)
 └─ Knowledge base (indexed docs)
     ↓ the same tunnel forwards :8007 → asrock B550 over the home LAN
 asrock B550 (Gentoo/OpenRC)
-└─ Faithfulness verifier (port 8007) — Qwen2.5-7B via Ollama, CPU
+└─ Faithfulness verifier (port 8007) — Qwen2.5-7B via Ollama, RTX 3060 Ti
 ```
 
 **RAG pipeline:** query → alias-expand → embed (8005, bge-base 768-d) → Qdrant cosine top-15 →
@@ -50,14 +50,23 @@ A deterministic **prompt-extraction guardrail** (`cloud/guardrails.py`) refuses
 (`scripts/eval_graded.py` + `eval/golden_set.yaml`) gates changes. A **hybrid dense+BM25** path
 exists (`HYBRID_SEARCH`) but is **OFF** — an A/B showed it regressed on this small KB (4.41 vs 4.82).
 
-### Known characteristic: the reranker truncates
+### Known characteristic: the reranker truncates (measured, and it does not matter)
 
 `bge-reranker-base` caps each (query, chunk) pair at **512 tokens** — an XLM-RoBERTa
-`max_position_embeddings=514` limit, not a tunable. The indexer's 400-word chunks tokenize to a
-~640-token median, so about 67% of chunks are scored on roughly their first three-quarters. This
-affects **ranking only**: `rerank_documents()` returns indices and the caller re-reads the full
-payload, so the LLM always receives whole chunks. Widening it means a bigger model (`v2-m3`, 8194
-positions, at real CPU cost) or smaller chunks. Measure before changing either.
+`max_position_embeddings=514` limit, not a tunable. The indexed corpus is 19 docs → 67 chunks
+(62 live Qdrant points), median **668** tokens, so **71.6%** are scored on part of their text.
+
+It affects **ranking only**: `rerank_documents()` returns indices and the caller re-reads the full
+payload (`api-proxy.py:234`), so the LLM always receives whole chunks.
+
+**It costs nothing measurable.** `scripts/compare_retrieval.py` scores the golden set's
+`expect_substrings` through the real pipeline: **19/20** at top-5 and **19/20** at top-8 — raising
+`top_k` recovers zero questions. So a `v2-m3` upgrade would buy latency we now print under every
+answer, for noise. Declined on evidence, as with hybrid BM25. Do not reopen without new data.
+
+The one miss is caused by **`RAG_MAX_PER_DOC=1`**, not truncation: for the AVD question the rank-3
+chunk contains "AVD" inside its first 498 tokens but is discarded because rank-1 came from the same
+doc. `max_per_doc=2` gives 20/20 at ~zero evidence cost (11,549 vs 11,792 median chars).
 
 ## Key Features
 
@@ -111,7 +120,7 @@ cwdotcom/
 | **Vector DB** | Qdrant | Dense cosine retrieval, top-15 candidates |
 | **Embeddings** | BAAI/bge-base-en-v1.5 (768-d) | Query/document → vector (CPU, port 8005) |
 | **Reranker** | bge-reranker-base | Cross-encoder precision, top-15 → top-5 (CPU, port 8006) |
-| **Faithfulness verifier** | Qwen2.5-7B via Ollama (CPU) | Out-of-band claim grounding (asrock, port 8007) |
+| **Faithfulness verifier** | Qwen2.5-7B via Ollama (RTX 3060 Ti) | Out-of-band claim grounding (asrock, port 8007) |
 | **Eval / guardrail** | graded eval + golden set; prompt-extraction guardrail | Regression gate + pre-LLM refusal |
 | **Frontend** | React + Vite + Tailwind | Built + rsynced to dev.cwetzel.com |
 | **Reverse proxy** | Apache | SSL termination, static serving, WSS proxy |
@@ -147,7 +156,9 @@ QDRANT_PORT=6333
 ```bash
 # Faithfulness verifier (OpenRC: verifier-service) + Ollama (OpenRC: ollama)
 VERIFIER_PORT=8007
-JUDGE_MODEL=qwen2.5:7b-instruct-q4_K_M   # CPU; independent of the 14B
+JUDGE_MODEL=qwen2.5:7b-instruct-q4_K_M   # on the 3060 Ti; independent of the 14B
+JUDGE_NUM_CTX=12288                      # ollama defaults to 4096 and truncates silently
+JUDGE_KEEP_ALIVE=30m                     # ollama evicts idle models after 5m
 ```
 
 **On the cloud server (cwetzel.com):**

@@ -18,6 +18,9 @@ Env config:
   JUDGE_BACKEND     "ollama" (default) | "openai"
   JUDGE_NUM_CTX     12288 (default). Ollama serves at 4096 unless told otherwise and
                     truncates silently; only honored on the ollama backend.
+  JUDGE_KEEP_ALIVE  30m (default). Ollama evicts idle models after 5m; an idle site
+                    then pays a cold load on nearly every verify.
+  JUDGE_TIMEOUT     120s (default) for the judge HTTP call. Warm calls are ~6.5s.
   JUDGE_URL         ollama: http://127.0.0.1:11434/api/chat
                     openai: http://127.0.0.1:11434/v1/chat/completions (or any)
   JUDGE_MODEL       default qwen2.5:7b-instruct-q4_K_M
@@ -60,6 +63,12 @@ JUDGE_MODEL = os.getenv("JUDGE_MODEL", "qwen2.5:7b-instruct-q4_K_M")
 # Ollama's own default is 4096 and it truncates silently — see _call_judge(). Real prompts
 # measured up to 10,214 tokens; the model supports 32768.
 JUDGE_NUM_CTX = int(os.getenv("JUDGE_NUM_CTX", "12288"))
+# Ollama evicts an idle model after 5 minutes by default (399 reloads observed in one log).
+# A portfolio site is idle most of the time, so nearly every verify paid a cold load — which
+# is what a 60s client timeout was actually recording, not a slow judge. Warm calls are ~6.5s.
+JUDGE_KEEP_ALIVE = os.getenv("JUDGE_KEEP_ALIVE", "30m")
+# Must exceed a COLD load + prefill, not just the warm path.
+JUDGE_TIMEOUT = float(os.getenv("JUDGE_TIMEOUT", "120"))
 THRESHOLD = float(os.getenv("THRESHOLD", "0.8"))
 SAMPLE_RATE = float(os.getenv("SAMPLE_RATE", "1.0"))
 MAX_INFLIGHT = int(os.getenv("MAX_INFLIGHT", "2"))
@@ -142,8 +151,9 @@ def _init_db():
 async def lifespan(app: FastAPI):
     global _http
     _init_db()
-    _http = httpx.AsyncClient(timeout=60.0)
+    _http = httpx.AsyncClient(timeout=JUDGE_TIMEOUT)
     logger.info(f"verifier up: backend={JUDGE_BACKEND} model={JUDGE_MODEL} num_ctx={JUDGE_NUM_CTX} "
+                f"keep_alive={JUDGE_KEEP_ALIVE} judge_timeout={JUDGE_TIMEOUT} "
                 f"threshold={THRESHOLD} db={DB_PATH}")
     yield
     await _http.aclose()
@@ -184,7 +194,7 @@ async def _call_judge(messages: list[dict]) -> str:
     """
     if JUDGE_BACKEND == "ollama":
         payload = {"model": JUDGE_MODEL, "messages": messages, "stream": False,
-                   "format": "json",
+                   "format": "json", "keep_alive": JUDGE_KEEP_ALIVE,
                    "options": {"temperature": 0.0, "num_ctx": JUDGE_NUM_CTX}}
         resp = await _http.post(JUDGE_URL, json=payload)
         resp.raise_for_status()

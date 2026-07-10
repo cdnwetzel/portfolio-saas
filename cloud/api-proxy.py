@@ -40,7 +40,12 @@ RERANK_URL = "http://127.0.0.1:8006"
 # spare-box judge at http://127.0.0.1:8007), the proxy fires a fire-and-forget
 # /verify AFTER the answer is delivered — it must never block or affect the chat.
 VERIFIER_URL = os.environ.get("VERIFIER_URL", "").rstrip("/")
-VERIFIER_TIMEOUT = float(os.environ.get("VERIFIER_TIMEOUT", "5.0"))
+# 5.0s discarded most of the work it asked for: measured warm /verify latency with the real
+# 15-chunk payload is median 6.5s, max 9.7s (judge on a 3060 Ti), so only 63 of 305 chats in a
+# 24h window ever got a verdict back. The call is an asyncio.create_task fired AFTER `done` is
+# sent, so waiting longer cannot delay the answer — it only stops us paying for a judgment and
+# then throwing it away. 20s covers the observed maximum with headroom.
+VERIFIER_TIMEOUT = float(os.environ.get("VERIFIER_TIMEOUT", "20.0"))
 # Optional input-token compression via the headroom-lib service on T5810,
 # reached via the existing portfolio-ai-tunnel ssh -L forward. Default
 # empty = disabled (no behavior change on this VPS). To enable, set in
