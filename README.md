@@ -1,5 +1,7 @@
 # Portfolio AI — dev.cwetzel.com
 
+[![CI](https://github.com/cdnwetzel/portfolio-saas/actions/workflows/ci.yml/badge.svg)](https://github.com/cdnwetzel/portfolio-saas/actions/workflows/ci.yml)
+
 A full-stack AI chat built on personal GPU hardware. Not a wrapper around OpenAI — Qwen 14B runs on two RTX A4500 GPUs in my home office via vLLM tensor parallelism. Every answer is grounded in a RAG knowledge base of documented work: case studies, infrastructure write-ups, LinkedIn posts, resume.
 
 **Live:** https://dev.cwetzel.com

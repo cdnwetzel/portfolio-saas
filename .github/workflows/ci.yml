@@ -1,0 +1,60 @@
+name: CI
+
+# Real CI for the portfolio RAG chat. Deliberately does NOT deploy: the production
+# deploy is `cloud/deploy.sh` (manual, per-action authorization, prod SSH, and a live
+# self-test gate). The previous workflow rsynced `src/`, `Dockerfile` and
+# `docker-compose.yml` — all of which live on the archived `legacy/saas-scaffold`
+# branch, not on main — so it could only ever have failed or lied.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  python-tests:
+    name: Python unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # The offline unit tests import only the Python stdlib: the pure-logic modules
+      # (guardrails, query_expansion, context_manager, sparse_bm25, verifier_core, and
+      # the indexer's chunker) were extracted precisely so they can be tested without
+      # the live stack. So install pytest alone — NOT the heavy runtime requirements.txt,
+      # and no postgres service.
+      - name: Install test deps
+        run: pip install pytest pytest-asyncio
+
+      # test_rag_system.py is deliberately excluded: it needs the full live stack
+      # (api-proxy :8000, vLLM :8004, Qdrant :6333, embeddings :8005) and is run by hand.
+      - name: Run unit tests
+        run: pytest tests/ home/verifier-service/test_verifier_core.py -v
+
+  frontend-build:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+
+      # Catches JSX/build breakage before it can reach the rsync in cloud/deploy.sh.
+      - name: Build
+        working-directory: frontend
+        run: npm run build
