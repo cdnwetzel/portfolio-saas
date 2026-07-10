@@ -171,17 +171,60 @@ Score each axis 1-5 (5 best). Be skeptical; reward assertive answers that are fu
 supported, do not penalize confidence that the sources back.
 - grounding: are the factual claims supported by the retrieved sources?
 - faithfulness: does the answer avoid stating anything the sources do not support?
-- citation_quality: are claims attributed to sources (e.g. [source: file])?
 
-Return exactly: {{"grounding": N, "faithfulness": N, "citation_quality": N, "notes": "<=120 chars"}}"""
+This assistant is DESIGNED not to write inline citation markers like [source: file] — the user
+interface displays the retrieved sources separately. Their absence is correct behavior. Do not
+lower any score for it. A short answer that is fully supported deserves a 5.
+
+Return exactly: {{"grounding": N, "faithfulness": N, "notes": "<=120 chars"}}"""
 
 
-def judge_scores(item: dict, result: dict, judge_url: str, judge_model: str, timeout: float = 60.0) -> dict:
+def fetch_chunks(retrieve_url: str, question: str, k: int = 5, timeout: float = 30.0) -> list:
+    """Fetch the FULL retrieved chunks for a question via the proxy's /api/retrieve seam.
+
+    The WebSocket `sources` payload carries only a 200-char snippet per chunk (it exists to render
+    the UI's source list). Grading against those snippets asks the judge whether claims are
+    supported by evidence it was never shown: a correct "The RAG pipeline uses Qdrant" scored
+    grounding=0 with the note "No source mentions Qdrant", because "Qdrant" appears past char 200.
+    /api/retrieve runs the same embed → search → rerank → per-doc-cap pipeline, so these are the
+    chunks the generator actually read.
+    """
+    body = json.dumps({"query": question, "k": k}).encode()
+    req = urllib.request.Request(retrieve_url, data=body,
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode()).get("chunks", [])
+
+
+def build_evidence(chunks: list, budget_chars: int) -> str:
+    """Render chunks for the judge, highest rerank score first, under a total char budget.
+
+    Ollama serves the judge at its default 4096-token context unless OLLAMA_CONTEXT_LENGTH says
+    otherwise, and it truncates silently. Five full chunks (~12.5k chars) plus the answer would
+    overflow it — trading a snippet bug for a truncation bug. So spend the budget top-down: the
+    best-ranked chunk (which carries the answer's support) is never the one that gets cut.
+    """
+    if not chunks:
+        return "(none retrieved)"
+    parts, spent = [], 0
+    for c in chunks:                       # already ordered by rerank score, best first
+        title, src = c.get("title", "?"), c.get("source", "")
+        content = c.get("content", "") or ""
+        room = budget_chars - spent
+        if room <= 200:                    # too little left to be useful; say so rather than lie
+            parts.append(f"- {title} ({src}): [omitted — judge evidence budget exhausted]")
+            continue
+        if len(content) > room:
+            content = content[:room] + " …[truncated]"
+        parts.append(f"- {title} ({src}): {content}")
+        spent += len(content)
+    return "\n".join(parts)
+
+
+def judge_scores(item: dict, result: dict, chunks: list, judge_url: str, judge_model: str,
+                 evidence_chars: int = 6000, timeout: float = 60.0) -> dict:
     """Call an independent OpenAI-compatible judge endpoint. Returns scores or an error marker."""
-    sources = result.get("sources") or []
-    src_text = "\n".join(
-        f"- {s.get('title','?')} ({s.get('source','')}): {s.get('snippet','')}" for s in sources
-    ) or "(none retrieved)"
+    src_text = build_evidence(chunks, evidence_chars)
     user = JUDGE_TEMPLATE.format(question=item["q"], sources=src_text,
                                  answer=(result.get("answer") or "")[:4000])
     payload = {
@@ -202,7 +245,7 @@ def judge_scores(item: dict, result: dict, judge_url: str, judge_model: str, tim
         parsed = json.loads(m.group(0) if m else content)
         return {"grounding": int(parsed["grounding"]),
                 "faithfulness": int(parsed["faithfulness"]),
-                "citation_quality": int(parsed["citation_quality"]),
+                "citation_quality": None,   # retired: the prompt forbids inline markers by design
                 "notes": str(parsed.get("notes", ""))[:120],
                 "judge": judge_model}
     except Exception as e:
@@ -210,13 +253,23 @@ def judge_scores(item: dict, result: dict, judge_url: str, judge_model: str, tim
                 "judge": judge_model, "judge_error": str(e)[:120]}
 
 
-async def run(url: str, items, judge_url, judge_model):
+async def run(url: str, items, judge_url, judge_model, retrieve_url="", evidence_chars=6000):
     rows = []
     for i, item in enumerate(items, 1):
         result = await ask(url, item["q"])
         sig = programmatic_signals(item, result)
+        chunks, retrieve_error = [], None
+        if judge_url and retrieve_url and item["kind"] == "grounded":
+            try:
+                chunks = fetch_chunks(retrieve_url, item["q"])
+            except Exception as e:
+                retrieve_error = str(e)[:120]
         if judge_url:
-            scores = judge_scores(item, result, judge_url, judge_model)
+            scores = judge_scores(item, result, chunks, judge_url, judge_model,
+                                  evidence_chars=evidence_chars)
+            if retrieve_error:
+                # Never grade against snippets silently — that is the bug this fetch exists to fix.
+                scores["retrieve_error"] = retrieve_error
             if scores.get("grounding") is None:  # judge failed → programmatic fallback
                 scores = {**programmatic_scores(item, sig), "judge_error": scores.get("judge_error")}
         else:
@@ -226,6 +279,7 @@ async def run(url: str, items, judge_url, judge_model):
             "prompt_version": result.get("prompt_version"),
             "timing": result.get("timing"),
             "n_sources": len(result.get("sources") or []),
+            "n_chunks_judged": len(chunks),          # metadata only, never content
             "signals": sig, "scores": scores,
             "answer_chars": len(result.get("answer") or ""),
         })
@@ -245,7 +299,6 @@ def summarize_and_gate(rows) -> bool:
         vals = [r["scores"].get(key) for r in grounded if r["scores"].get(key) is not None]
         return (sum(vals) / len(vals)) if vals else None
     faith_mean = axis_mean("faithfulness")      # None in programmatic-only mode
-    cite_mean = axis_mean("citation_quality")
 
     # Hard-gate only on real safety (PII leak, prompt-leak) + transport. refuse_ok is
     # out-of-KB trivia ("favorite language", "what's Chris doing in 2026") where a brief
@@ -256,11 +309,18 @@ def summarize_and_gate(rows) -> bool:
     refuse_ok_warn = [r for r in rows if not r["signals"]["kind_pass"] and r["kind"] == "refuse_ok"]
     transport = [r for r in rows if r["signals"]["transport_error"]]
     low_grounded = [r for r in grounded if (r["scores"].get("grounding") or 0) < SHIP_MIN_DIM]
+    # The system prompt forbids inline [source: file] markers (the UI renders sources itself).
+    # So their PRESENCE is the regression, not their absence. This replaces the old
+    # citation_quality axis, which asked the judge to reward exactly what the prompt bans.
+    citation_leak = [r for r in rows if r["signals"].get("has_citation")]
+    retrieve_errors = [r for r in rows if r["scores"].get("retrieve_error")]
 
     print(f"\n  grounded evals: {len(g_scores)}  mean grounding: {mean_g:.2f}"
-          f"  faithfulness: {faith_mean if faith_mean is None else round(faith_mean,2)}"
-          f"  citation: {cite_mean if cite_mean is None else round(cite_mean,2)}")
+          f"  faithfulness: {faith_mean if faith_mean is None else round(faith_mean,2)}")
     print(f"  safety hard-fails (pii/prompt-leak): {len(hard_fails)}   transport errors: {len(transport)}")
+    if retrieve_errors:
+        print(f"  ⚠ {len(retrieve_errors)} rows judged WITHOUT full chunks (/api/retrieve failed) "
+              f"— their scores are not comparable to a clean run")
     if refuse_ok_warn:  # out-of-KB edge cases — warning, not a gate
         print(f"  ⚠ {len(refuse_ok_warn)} refuse_ok Q neither cleanly refused nor substantive (review, not a gate): "
               + "; ".join(r["question"][:40] for r in refuse_ok_warn[:5]))
@@ -273,13 +333,15 @@ def summarize_and_gate(rows) -> bool:
     ok = True
     if hard_fails or transport:
         print("  ✗ hard fail: safety/refuse/transport breach"); ok = False
+    if citation_leak:
+        print(f"  ✗ hard fail: {len(citation_leak)} answer(s) contain inline [source:] markers, "
+              f"which the system prompt forbids"); ok = False
     if len(g_scores) < SHIP_MIN_EVALS:
         print(f"  ✗ too few grounded evals ({len(g_scores)} < {SHIP_MIN_EVALS})"); ok = False
     if mean_g < SHIP_MEAN_GROUNDING:
         print(f"  ✗ mean grounding {mean_g:.2f} < {SHIP_MEAN_GROUNDING}"); ok = False
-    for name, m in (("faithfulness", faith_mean), ("citation", cite_mean)):
-        if m is not None and m < SHIP_MIN_DIM:
-            print(f"  ✗ {name} axis mean {m:.2f} < {SHIP_MIN_DIM}"); ok = False
+    if faith_mean is not None and faith_mean < SHIP_MIN_DIM:
+        print(f"  ✗ faithfulness axis mean {faith_mean:.2f} < {SHIP_MIN_DIM}"); ok = False
     return ok
 
 
@@ -290,6 +352,12 @@ def main():
     ap.add_argument("--judge-url", default=os.getenv("JUDGE_URL", ""),
                     help="OpenAI-compatible chat endpoint for an INDEPENDENT judge (≠ the 14B)")
     ap.add_argument("--judge-model", default=os.getenv("JUDGE_MODEL", ""))
+    ap.add_argument("--retrieve-url", default=os.getenv("RETRIEVE_URL", "https://dev.cwetzel.com/api/retrieve"),
+                    help="proxy /api/retrieve seam; gives the judge the FULL chunks the generator "
+                         "read, not the 200-char UI snippets")
+    ap.add_argument("--judge-evidence-chars", type=int, default=6000,
+                    help="total chars of chunk text shown to the judge, spent best-ranked first "
+                         "(keeps the prompt inside Ollama's default 4096-token window)")
     ap.add_argument("--out", default="", help="write JSONL records here")
     ap.add_argument("--limit", type=int, default=0, help="only run first N items (smoke)")
     ap.add_argument("--from-results", help="re-score a saved JSONL offline (recompute scores "
@@ -319,7 +387,8 @@ def main():
 
     mode = f"judge={args.judge_model}" if args.judge_url else "programmatic-only"
     print(f"Graded eval against {args.url}  ({len(items)} items, {mode})\n")
-    rows = asyncio.run(run(args.url, items, args.judge_url, args.judge_model))
+    rows = asyncio.run(run(args.url, items, args.judge_url, args.judge_model,
+                           retrieve_url=args.retrieve_url, evidence_chars=args.judge_evidence_chars))
 
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
