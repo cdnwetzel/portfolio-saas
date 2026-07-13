@@ -26,6 +26,7 @@ from context_manager import (
 )
 from query_expansion import expand_query
 from guardrails import is_prompt_extraction, EXTRACTION_REFUSAL
+from verify_gate import should_verify
 import sparse_bm25
 
 logging.basicConfig(level=logging.INFO)
@@ -46,6 +47,12 @@ VERIFIER_URL = os.environ.get("VERIFIER_URL", "").rstrip("/")
 # sent, so waiting longer cannot delay the answer — it only stops us paying for a judgment and
 # then throwing it away. 20s covers the observed maximum with headroom.
 VERIFIER_TIMEOUT = float(os.environ.get("VERIFIER_TIMEOUT", "20.0"))
+# Minimum retrieval relevance score to gate verification (verify_gate.py). When the top
+# evidence chunk scores below this threshold, the retrieved chunks are too off-topic to
+# make a faithfulness judgment meaningful — skip verification entirely to avoid false-positive
+# flags on non-KB answers. Default 0.0 (gate disabled) — calibrate empirically before enabling.
+# See plans/write-the-full-plan-cached-grove.md for calibration method against golden_set.yaml.
+VERIFY_MIN_SCORE = float(os.environ.get("VERIFY_MIN_SCORE", "0.0"))
 # Optional input-token compression via the headroom-lib service on T5810,
 # reached via the existing portfolio-ai-tunnel ssh -L forward. Default
 # empty = disabled (no behavior change on this VPS). To enable, set in
@@ -600,9 +607,15 @@ async def websocket_chat(websocket: WebSocket):
                 })
                 # Out-of-band faithfulness check (verifier plan §7.1): post-`done`,
                 # fire-and-forget, no-op unless VERIFIER_URL is set. Never blocks.
-                asyncio.create_task(
-                    _fire_verify(request_id, user_query, full_response, evidence_docs, websocket)
-                )
+                # Gate on retrieval relevance (verify_gate.py): skip if top evidence score is
+                # too low, avoiding false-positive flags on non-KB answers (see context above).
+                top_score = evidence_docs[0].get("score", 0.0) if evidence_docs else 0.0
+                if should_verify(top_score, VERIFY_MIN_SCORE):
+                    asyncio.create_task(
+                        _fire_verify(request_id, user_query, full_response, evidence_docs, websocket)
+                    )
+                else:
+                    logger.debug(f"verifier skipped: low retrieval relevance (top_score={top_score:.3f})")
 
     except Exception as e:
         logger.error(f"WebSocket error: {e}")

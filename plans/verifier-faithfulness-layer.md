@@ -75,6 +75,12 @@ For each completed chat response it receives `(query, answer, chunks)` and:
 - **It does not directly detect retrieval misses.** If the right chunk was never retrieved, the
   answer may score "unsupported" — but the root cause is retrieval, not generation. The verdict
   flags the symptom; triage decides the cause.
+- **Whole-answer topic mismatch causes false-positive flags** (found 2026-07-12): an off-topic/non-RAG
+  answer (e.g., a code-generation request) still gets irrelevant KB chunks from Qdrant's top-K and
+  gets judged against them, scoring "unsupported" and flagging even though the question was never
+  KB-answerable. Mitigated by a relevance gate (`cloud/verify_gate.py`) that skips verification when
+  the top retrieval score is below `VERIFY_MIN_SCORE` (default 0.0, gate disabled until calibrated) —
+  see `plans/write-the-full-plan-cached-grove.md` for the calibration method.
 - **Claim decomposition is imperfect** — compound/hedged sentences split unevenly; scores are
   approximate. Use trends + flags, not 3-decimal precision.
 - **Throughput-bounded.** One 8 GB GPU judges ~1 response at a time; under concurrent load,
